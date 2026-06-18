@@ -77,6 +77,31 @@
   .toast.ok { border-color: var(--accent-dim); } .toast.err { border-color: #5c2530; color: var(--danger-text); }
   .empty { color: var(--faint); font-size: 13px; text-align: center; padding: 26px 0; font-family: var(--mono); }
   .locked { opacity: .4; pointer-events: none; }
+
+  /* ===== 新增：现代化下拉框与删除按钮样式 ===== */
+  .model-select-wrapper { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .modern-select-container { position: relative; flex: 1; min-width: 0; }
+  .modern-select {
+    width: 100%; appearance: none; -webkit-appearance: none;
+    padding: 9px 30px 9px 11px; border: 1px solid var(--line); border-radius: 8px;
+    background-color: var(--ink); color: var(--text); font-size: 13.5px;
+    font-family: var(--mono); outline: none; cursor: pointer; transition: border-color .12s, box-shadow .12s;
+  }
+  .modern-select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #34d39920; }
+  .select-arrow {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px; color: var(--muted); pointer-events: none;
+  }
+  .btn-delete {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px; padding: 0; border: 1px solid var(--danger);
+    background-color: transparent; color: var(--danger-text); border-radius: 8px;
+    cursor: pointer; transition: all .12s; flex-shrink: 0;
+  }
+  .btn-delete:hover { background-color: #fb718515; border-color: var(--danger-text); color: var(--danger-text); }
+  .btn-delete svg { width: 18px; height: 18px; }
+  optgroup { font-style: normal; font-weight: 600; color: var(--muted); background: var(--panel); }
+  option { font-weight: normal; color: var(--text); background: var(--ink); }
 </style>
 </head>
 <body>
@@ -136,10 +161,22 @@
         <label>PROXY_API_KEY</label>
         <input id="proxyKey" type="password" placeholder="后台设的 PROXY_API_KEY" />
       </div>
-      <div>
-        <label>模型（直接写模型名）</label>
-        <input id="testModel" list="modelList" placeholder="gemini-3.5-flash" />
-        <datalist id="modelList"></datalist>
+      <!-- ===== 修改处：优化后的下拉选择与删除按钮 ===== -->
+      <div style="flex: 1.5;">
+        <label>模型（选择后可测试，或点击右侧删除）</label>
+        <div class="model-select-wrapper">
+          <div class="modern-select-container">
+            <select id="testModel" class="modern-select">
+              <option value="" disabled selected>请先拉取或添加模型</option>
+            </select>
+            <svg class="select-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+          </div>
+          <button id="delModelBtn" class="btn-delete" title="删除选中的模型（自动保存）">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
     <div class="field">
@@ -268,10 +305,58 @@
   -H "Authorization: Bearer <span class="k">$PROXY_API_KEY</span>" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"${escapeHtml(m)}","messages":[{"role":"user","content":"hello"}]}'`;
-    const dl = $("modelList"); dl.innerHTML = "";
-    const bare = new Set();
-    endpoints.forEach((ep) => (ep.models || []).forEach((mm) => bare.add(mm)));
-    bare.forEach((mm) => { const o = document.createElement("option"); o.value = mm; dl.appendChild(o); });
+    
+    // ===== 修改处：高级模型去重合并逻辑 =====
+    const sel = $("testModel");
+    const currentVal = sel.value;
+    sel.innerHTML = "";
+
+    const modelMap = new Map();
+    endpoints.forEach((ep) => {
+      const upName = ep.name || "未命名";
+      (ep.models || []).forEach((mm) => {
+        if (!modelMap.has(mm)) modelMap.set(mm, []);
+        modelMap.get(mm).push(upName);
+      });
+    });
+
+    if (modelMap.size === 0) {
+      const o = document.createElement("option"); 
+      o.value = ""; 
+      o.textContent = "暂无可用模型，请先添加配置"; 
+      o.disabled = true; o.selected = true;
+      sel.appendChild(o);
+    } else {
+      // 1. 自动负载均衡分组（合并重复模型）
+      const groupAll = document.createElement("optgroup");
+      groupAll.label = "自动负载均衡";
+      modelMap.forEach((upstreams, mm) => {
+        const o = document.createElement("option");
+        o.value = mm;
+        o.textContent = `${mm} (${upstreams.join(", ")})`;
+        groupAll.appendChild(o);
+      });
+      sel.appendChild(groupAll);
+
+      // 2. 直连特定上游分组（保留原有的精准测试能力）
+      const groupDirect = document.createElement("optgroup");
+      groupDirect.label = "直连特定上游 (站点名/模型名)";
+      endpoints.forEach((ep) => {
+        const upName = ep.name;
+        if (!upName) return;
+        (ep.models || []).forEach((mm) => {
+          const o = document.createElement("option");
+          o.value = `${upName}/${mm}`;
+          o.textContent = `${upName}/${mm}`;
+          groupDirect.appendChild(o);
+        });
+      });
+      if (groupDirect.children.length > 0) sel.appendChild(groupDirect);
+
+      // 恢复之前的选中状态
+      if (currentVal) sel.value = currentVal;
+      if (!sel.value && sel.options.length > 0) sel.selectedIndex = 0;
+    }
   }
 
   async function loadStats() {
@@ -355,8 +440,8 @@
         res.textContent = d.status ? `✗ ${d.status}：没拿到模型列表` : `✗ ${d.error || "没拿到模型列表"}`;
         return;
       }
-      endpoints[idx].models = d.models;   // 填入模型列表
-      render();                            // 重绘，模型框会显示拉到的列表
+      endpoints[idx].models = d.models;   
+      render();                           
       const res2 = document.querySelector(`[data-pingres="${idx}"]`);
       res2.className = "ping-res ok";
       res2.textContent = `✓ 拉到 ${d.models.length} 个模型 · 记得点「保存配置」`;
@@ -392,6 +477,51 @@
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);
+
+  // ===== 修改处：全局删除模型逻辑（含自动保存） =====
+  $("delModelBtn").addEventListener("click", () => {
+    if (!connected) return toast("先连接控制台", "err");
+    const sel = $("testModel");
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt || !opt.value) return toast("请先选择一个要删除的模型", "err");
+    
+    // 智能判断是从"自动均衡"中删除，还是从"直连特定上游"中删除
+    const isDirect = opt.parentNode && opt.parentNode.label && opt.parentNode.label.includes("直连");
+    let targetUpstream = null;
+    let modelToDelete = opt.value;
+
+    if (isDirect) {
+      endpoints.forEach(ep => {
+        if (ep.name && opt.value.startsWith(ep.name + "/")) {
+          targetUpstream = ep.name;
+          modelToDelete = opt.value.substring(ep.name.length + 1);
+        }
+      });
+    }
+
+    const msg = isDirect 
+      ? `确定要从站点 "${targetUpstream}" 中删除模型 "${modelToDelete}" 吗？\n（删除后将自动保存）`
+      : `确定要从【所有站点】中删除模型 "${modelToDelete}" 吗？\n（删除后将自动保存）`;
+
+    if (confirm(msg)) {
+      let changed = false;
+      endpoints.forEach(ep => {
+        if (isDirect && ep.name !== targetUpstream) return;
+        if (ep.models) {
+          const oldLen = ep.models.length;
+          ep.models = ep.models.filter(m => m !== modelToDelete);
+          if (ep.models.length !== oldLen) changed = true;
+        }
+      });
+      if (changed) {
+        render(); // 刷新UI（模型文本框和下拉列表会同步消除此模型）
+        save();   // 自动推送到后端保存
+        toast(`已删除模型: ${modelToDelete}`, "ok");
+      } else {
+        toast("未找到可删除的模型", "err");
+      }
+    }
+  });
 
   refreshUsage();
   if (LS.a) connect();

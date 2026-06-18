@@ -54,7 +54,6 @@
   button.link:hover { background: var(--danger); }
   button:disabled { opacity: .45; cursor: not-allowed; }
   .ep { border: 1px solid var(--line-soft); border-radius: 10px; margin-bottom: 10px; background: var(--panel-2); border-left: 3px solid var(--accent-dim); overflow: hidden; }
-  /* 折叠头(常显的一行摘要) */
   .ep-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; user-select: none; }
   .ep-row:hover { background: #1a212b; }
   .ep-row .nm { font-family: var(--mono); font-weight: 600; color: var(--accent); flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -68,20 +67,9 @@
   .ep-row .del:hover { background: var(--danger); border-radius: 6px; }
   .sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
   .sdot.ok { background: var(--accent); } .sdot.err { background: var(--danger-text); }
-  /* 折叠体(展开才显示) */
   .ep-body { display: none; padding: 0 14px 14px; border-top: 1px solid var(--line-soft); }
   .ep.open .ep-body { display: block; }
   .ep-body .field:first-child { margin-top: 12px; }
-  /* 拖拽排序 */
-  .ep.dragging { opacity: .45; }
-  .ep.drop-before { box-shadow: inset 0 3px 0 0 var(--accent); }
-  .ep.drop-after { box-shadow: inset 0 -3px 0 0 var(--accent); }
-  .drag-handle { cursor: grab; color: var(--faint); flex: none; font-size: 13px; letter-spacing: -2px; }
-  .drag-handle:active { cursor: grabbing; }
-  /* 未保存高亮 */
-  #saveBtn { background: var(--panel-2); color: var(--muted); border-color: var(--line); }
-  #saveBtn.dirty { background: var(--accent); color: #06130d; border-color: var(--accent); animation: savePulse 1.8s ease-in-out infinite; }
-  @keyframes savePulse { 0%,100% { box-shadow: 0 0 0 0 #34d39900; } 50% { box-shadow: 0 0 0 4px #34d39933; } }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
   .field { margin-bottom: 12px; } .field:last-child { margin-bottom: 0; }
@@ -102,25 +90,69 @@
   .toast.ok { border-color: var(--accent-dim); } .toast.err { border-color: #5c2530; color: var(--danger-text); }
   .empty { color: var(--faint); font-size: 13px; text-align: center; padding: 26px 0; font-family: var(--mono); }
   .locked { opacity: .4; pointer-events: none; }
-  /* 自定义可搜索下拉 */
-  .combo { position: relative; }
-  .combo > input { padding-right: 34px; }
-  .combo-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px;
+
+  /* ===== 核心修改：全面美化自定义可搜索下拉与删除按钮 ===== */
+  .combo { position: relative; flex: 1; min-width: 0; }
+  .combo > input { 
+    padding-right: 34px; 
+    transition: border-color .15s, box-shadow .15s;
+    cursor: text;
+  }
+  .combo > input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px #34d39920;
+  }
+  /* 下拉指示小箭头 */
+  .combo-arrow {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px; color: var(--muted); pointer-events: none;
+    transition: transform 0.2s;
+  }
+  /* 清空按钮 */
+  .combo-clear { 
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px;
     padding: 0; line-height: 1; font-size: 16px; border: none; background: transparent; color: var(--faint);
-    border-radius: 6px; display: none; }
+    border-radius: 6px; display: none; cursor: pointer; transition: color .15s;
+  }
   .combo-clear:hover { background: var(--line); color: var(--text); }
+  /* 输入框有值时：隐藏箭头，显示清空按钮 */
   .combo.has-val .combo-clear { display: block; }
-  .combo-menu { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px;
-    max-height: 280px; overflow-y: auto; box-shadow: 0 12px 30px #00000066; display: none; }
-  .combo-menu.open { display: block; }
-  .combo-item { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 8px 10px; border-radius: 7px; cursor: pointer; font-family: var(--mono); font-size: 13px; color: var(--text); }
-  .combo-item:hover, .combo-item.active { background: var(--panel-2); }
-  .combo-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .combo.has-val .combo-arrow { display: none; }
+  /* 展开时箭头动画 */
+  .combo.open .combo-arrow { transform: translateY(-50%) rotate(180deg); }
+
+  /* 下拉菜单动画与样式 */
+  .combo-menu { 
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px;
+    max-height: 280px; overflow-y: auto; box-shadow: 0 12px 30px #00000080; 
+    visibility: hidden; opacity: 0; transform: translateY(-4px); 
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  }
+  .combo-menu.open { visibility: visible; opacity: 1; transform: translateY(0); }
+  
+  .combo-item { 
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--text); 
+    transition: background 0.1s;
+  }
+  .combo-item:hover, .combo-item.active { background: var(--line); }
+  .combo-item .nm { font-family: var(--mono); font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .combo-item .upstreams { font-size: 11px; color: var(--faint); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .combo-badge { flex: none; font-size: 11px; color: var(--accent); background: #34d39915;
-    border: 1px solid var(--accent-dim); border-radius: 999px; padding: 1px 8px; }
-  .combo-none { padding: 12px 10px; color: var(--faint); font-size: 12.5px; font-family: var(--mono); text-align: center; }
+    border: 1px solid #34d39930; border-radius: 999px; padding: 1px 8px; font-weight: 600; }
+  .combo-none { padding: 16px 10px; color: var(--faint); font-size: 12.5px; font-family: var(--mono); text-align: center; }
+
+  /* 删除按钮 */
+  .btn-delete {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px; padding: 0; border: 1px solid var(--danger);
+    background-color: transparent; color: var(--danger-text); border-radius: 8px;
+    cursor: pointer; transition: all .15s ease;
+  }
+  .btn-delete:hover { background-color: #fb71851a; border-color: var(--danger-text); transform: scale(1.02); }
+  .btn-delete:active { transform: scale(0.96); }
+  .btn-delete svg { width: 16px; height: 16px; }
 </style>
 </head>
 <body>
@@ -150,7 +182,7 @@
     <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个（失败的冷却 30 秒）。给多家填上同一个模型即可自动负载均衡 + 故障转移。</div>
     <div class="toolbar">
       <button class="primary mini" id="addBtn">+ 新增站点</button>
-      <button class="mini" id="saveBtn" disabled>保存配置</button>
+      <button class=\"mini\" id="saveBtn" disabled>保存配置</button>
       <span class="spacer"></span>
       <button class="mini ghost" id="refreshStatsBtn">刷新统计</button>
       <button class="mini ghost" id="resetStatsBtn">清零统计</button>
@@ -178,12 +210,22 @@
         <label>PROXY_API_KEY</label>
         <input id="proxyKey" type="password" placeholder="后台设的 PROXY_API_KEY" />
       </div>
-      <div>
-        <label>模型（直接写模型名）</label>
-        <div class="combo" id="modelCombo">
-          <input id="testModel" autocomplete="off" placeholder="gemini-3.5-flash" />
-          <button type="button" class="combo-clear" id="modelClear" title="清空">&times;</button>
-          <div class="combo-menu" id="modelMenu"></div>
+      <div style="flex: 1.5;">
+        <label>模型（可下拉选择搜索，支持自由填入 站点/模型名）</label>
+        <!-- 核心修改区：整合框框与删除按钮 -->
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="combo" id="modelCombo">
+            <input id="testModel" autocomplete="off" placeholder="gemini-3.5-flash" />
+            <svg class="combo-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            <button type="button" class="combo-clear" id="modelClear" title="清空">&times;</button>
+            <div class="combo-menu" id="modelMenu"></div>
+          </div>
+          <!-- 新增：全局删除模型按钮 -->
+          <button type="button" class="btn-delete" id="delModelBtn" title="一键从所有上游中彻底移除该模型">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+          </button>
         </div>
       </div>
     </div>
@@ -220,10 +262,8 @@
   let endpoints = [];
   let stats = {};
   let connected = false;
-  let uidSeq = 0;            // 给每个站点一个稳定 id，用于记住展开状态
-  const openSet = new Set(); // 展开中的站点 uid
-  let dragUid = null;        // 拖拽中的站点 uid
-  let dirty = false;         // 有未保存改动
+  let uidSeq = 0;            
+  const openSet = new Set(); 
 
   let toastTimer;
   function toast(msg, kind = "ok") {
@@ -316,7 +356,6 @@
       list.appendChild(el);
     });
 
-    // 折叠头点击展开/收起（删除按钮除外）
     list.querySelectorAll(".ep-row").forEach((row) => {
       row.addEventListener("click", (e) => {
         if (e.target.closest(".del")) return;
@@ -327,7 +366,6 @@
       });
     });
 
-    // 编辑输入：更新数据 + 同步摘要行（不整体重绘，避免打断输入）
     list.querySelectorAll("[data-f]").forEach((node) => {
       node.addEventListener("input", (e) => {
         const i = +e.target.dataset.i, f = e.target.dataset.f;
@@ -364,12 +402,23 @@
     buildModelCatalog();
   }
 
-  // 模型目录：合并相同模型，并统计有几家上游提供（用于「×N 家」徽标和自动均衡可见性）
-  let modelCatalog = []; // [{ model, count }]
+  // ===== 核心修改：模型聚合统计（含具体站点名称追踪） =====
+  let modelCatalog = [];
   function buildModelCatalog() {
-    const counts = {};
-    endpoints.forEach((ep) => (ep.models || []).forEach((mm) => { counts[mm] = (counts[mm] || 0) + 1; }));
-    modelCatalog = Object.keys(counts).sort().map((model) => ({ model, count: counts[model] }));
+    const providers = {};
+    endpoints.forEach((ep) => {
+      const upName = ep.name || "未命名";
+      (ep.models || []).forEach((mm) => {
+        if (!providers[mm]) providers[mm] = [];
+        if (!providers[mm].includes(upName)) providers[mm].push(upName);
+      });
+    });
+    // 组装并排序，生成展示所需的数组
+    modelCatalog = Object.keys(providers).sort().map((model) => ({ 
+      model, 
+      count: providers[model].length,
+      upstreams: providers[model]
+    }));
     syncClear();
     renderModelMenu($("testModel").value.trim());
   }
@@ -382,18 +431,25 @@
     const menu = $("modelMenu");
     const q = (filter || "").toLowerCase();
     const items = modelCatalog.filter((x) => x.model.toLowerCase().includes(q));
+    
     if (!items.length) {
       menu.innerHTML = `<div class="combo-none">${modelCatalog.length ? "没有匹配的模型" : "先在上游站点里拉取/填写模型"}</div>`;
       return;
     }
+    
+    // 核心修改：重写下拉菜单项，显示来源于哪些上游站点的详情
     menu.innerHTML = items
       .map((x) => `<div class="combo-item" data-m="${escapeAttr(x.model)}">
-          <span class="nm">${escapeHtml(x.model)}</span>
-          ${x.count > 1 ? `<span class="combo-badge">×${x.count} 家</span>` : ""}
+          <div style="display:flex; flex-direction:column; overflow:hidden;">
+            <span class="nm">${escapeHtml(x.model)}</span>
+            ${x.upstreams && x.upstreams.length > 0 ? `<span class="upstreams">由 ${escapeHtml(x.upstreams.join(', '))} 提供</span>` : ""}
+          </div>
+          ${x.count > 1 ? `<span class="combo-badge">×${x.count}</span>` : ""}
         </div>`)
       .join("");
+      
     menu.querySelectorAll(".combo-item").forEach((it) => {
-      it.addEventListener("mousedown", (e) => {  // mousedown：先于 input 失焦
+      it.addEventListener("mousedown", (e) => {
         e.preventDefault();
         $("testModel").value = it.dataset.m;
         syncClear();
@@ -401,8 +457,16 @@
       });
     });
   }
-  function openModelMenu() { renderModelMenu($("testModel").value.trim()); $("modelMenu").classList.add("open"); }
-  function closeModelMenu() { $("modelMenu").classList.remove("open"); }
+  
+  function openModelMenu() { 
+    renderModelMenu($("testModel").value.trim()); 
+    $("modelMenu").classList.add("open"); 
+    $("modelCombo").classList.add("open"); // 触发箭头旋转动画
+  }
+  function closeModelMenu() { 
+    $("modelMenu").classList.remove("open"); 
+    $("modelCombo").classList.remove("open");
+  }
 
   async function loadStats() {
     try {
@@ -485,8 +549,8 @@
         res.textContent = d.status ? `✗ ${d.status}：没拿到模型列表` : `✗ ${d.error || "没拿到模型列表"}`;
         return;
       }
-      endpoints[idx].models = d.models;   // 填入模型列表
-      render();                            // 重绘，模型框会显示拉到的列表
+      endpoints[idx].models = d.models;   
+      render();                            
       const res2 = document.querySelector(`[data-pingres="${idx}"]`);
       res2.className = "ping-res ok";
       res2.textContent = `✓ 拉到 ${d.models.length} 个模型 · 记得点「保存配置」`;
@@ -513,6 +577,43 @@
     } catch (err) { out.textContent = "请求出错：" + err.message; }
   }
 
+  // ===== 核心修改：真正的跨端删除模型逻辑 =====
+  $("delModelBtn").addEventListener("click", () => {
+    if (!connected) return toast("先连接控制台", "err");
+    const modelToDelete = $("testModel").value.trim();
+    if (!modelToDelete) return toast("请先下拉选择或输入要删除的模型", "err");
+    
+    // 检查是否有该模型
+    let found = false;
+    endpoints.forEach(ep => {
+      if ((ep.models || []).includes(modelToDelete)) found = true;
+    });
+
+    if (!found) {
+      return toast("当前所有站点的配置中均不存在该模型", "err");
+    }
+
+    if (confirm(`危险操作：确定要从【所有上游】中彻底移除模型 "${modelToDelete}" 吗？\n（操作后将自动触发保存配置）`)) {
+      let changed = false;
+      endpoints.forEach(ep => {
+        if (ep.models) {
+          const oldLen = ep.models.length;
+          // 从当前站点的数组中过滤掉该模型
+          ep.models = ep.models.filter(m => m !== modelToDelete);
+          if (ep.models.length !== oldLen) changed = true;
+        }
+      });
+      
+      if (changed) {
+        $("testModel").value = "";
+        syncClear();
+        render();  // 这会重绘所有的 textareas，UI会立刻刷新消除模型名
+        save();    // 触发网络请求将更新后的配置直接覆写进 Cloudflare KV
+        toast(`已删除模型: ${modelToDelete}`, "ok");
+      }
+    }
+  });
+
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
   function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
@@ -520,8 +621,8 @@
   $("addBtn").addEventListener("click", () => {
     if (!connected) return toast("先连接控制台", "err");
     const ne = { name: "", baseUrl: "", apiKeys: [], models: [], _uid: ++uidSeq };
-    endpoints.unshift(ne);     // 插到最上面
-    openSet.add(ne._uid);      // 自动展开
+    endpoints.unshift(ne);     
+    openSet.add(ne._uid);      
     render();
   });
   $("saveBtn").addEventListener("click", save);
@@ -529,7 +630,6 @@
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);
 
-  // 自定义模型下拉：聚焦/输入时展开并过滤，点外面收起，清空按钮
   $("testModel").addEventListener("focus", openModelMenu);
   $("testModel").addEventListener("input", () => { syncClear(); openModelMenu(); });
   $("modelClear").addEventListener("click", () => { $("testModel").value = ""; syncClear(); $("testModel").focus(); openModelMenu(); });

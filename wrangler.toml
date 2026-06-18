@@ -5,9 +5,9 @@ pages_build_output_dir = "public"
 # KV 命名空间：存放上游站点配置。
 # 用 wrangler 部署时把 id 换成你创建的命名空间 ID（见 README）。
 # 用「连接 Git」方式部署时，这里可不填，改在 Pages 控制台里绑定。
-[[kv_namespaces]]
-binding = "CONFIG_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+#[[kv_namespaces]]
+#binding = "CONFIG_KV"
+#id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
 
 # 注意：ADMIN_TOKEN 和 PROXY_API_KEY 属于密钥，不要写在这里。
 # 用 `wrangler pages secret put ADMIN_TOKEN` 设置，或在控制台 Settings → 环境变量 里加（加密）。

@@ -666,6 +666,11 @@
     }
   });
 
+  // ====== 之前不小心被删掉的两个救命函数，已经补回！ ======
+  function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+  function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+  // =========================================================
+
   $("connectBtn").addEventListener("click", connect);
   $("addBtn").addEventListener("click", () => {
     if (!connected) return toast("先连接控制台", "err");

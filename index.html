@@ -118,10 +118,17 @@
   .btn-delete:hover { background-color: #fb71851a; border-color: var(--danger-text); transform: scale(1.02); }
   .btn-delete:active { transform: scale(0.96); }
   
-  /* 魔法过滤按钮：黄/蓝色高亮 */
   .btn-magic { color: var(--warn); border-color: #fbbf2450; }
   .btn-magic:hover { background-color: #fbbf2415; border-color: var(--warn); transform: scale(1.02); }
   .btn-magic:active { transform: scale(0.96); }
+
+  /* 给下拉小框一点特别的样式调整 */
+  select#concurrencySelect {
+    cursor: pointer;
+    padding-left: 12px;
+    padding-right: 12px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -174,12 +181,23 @@
   <section class="card">
     <h2>调用测试与清洗</h2>
     <div class="row" style="margin-bottom:12px;">
-      <div>
-        <label>PROXY_API_KEY（测试/清洗模型必备）</label>
-        <input id="proxyKey" type="password" placeholder="后台设的 PROXY_API_KEY" />
+      <!-- 将原本的一个 Proxy 输入框，分作两列：鉴权密钥 + 并发数 -->
+      <div style="flex: 1; display: flex; gap: 10px;">
+        <div style="flex: 1;">
+          <label>PROXY_API_KEY（测试/清洗必备）</label>
+          <input id="proxyKey" type="password" placeholder="后台设的 PROXY_API_KEY" />
+        </div>
+        <div style="width: 80px; flex: none;">
+          <label>测活并发</label>
+          <select id="concurrencySelect" title="同时发送测试请求的数量，按质量调整">
+            <option value="6">6</option>
+            <option value="12" selected>12</option>
+            <option value="32">32</option>
+          </select>
+        </div>
       </div>
       <div style="flex: 1.5;">
-        <label>下拉仅展示已清洗可用模型（支持自由填入 站点/模型名）</label>
+        <label>下拉仅展示可用模型（支持自由填入 站点/模型名）</label>
         <div style="display: flex; gap: 8px; align-items: center;">
           <div class="combo" id="modelCombo">
             <input id="testModel" autocomplete="off" placeholder="gemini-3.5-flash" />
@@ -523,12 +541,13 @@
   async function selfTestEndpoint(idx) {
     const ep = endpoints[idx];
     const key = $("proxyKey").value.trim();
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
     const res = document.querySelector(`[data-pingres="${idx}"]`);
     
     if (!key) { res.className = "ping-res err"; res.textContent = "✗ 请先在最下方填写 PROXY_API_KEY"; return toast("自测依赖代理身份验证，请先填入 PROXY_API_KEY", "err"); }
     if (!ep.models || !ep.models.length) { res.className = "ping-res err"; res.textContent = "✗ 暂无模型可清洗"; return; }
 
-    if (!confirm(`即将对该站点的 ${ep.models.length} 个模型进行并发测试。\n遇到不支持对话（如 tts / dall-e）或失效的模型将被自动剔除。\n为了防拦截，系统将以最多 5 个请求同时进行的并发速度测试，确定继续吗？`)) return;
+    if (!confirm(`即将对该站点的 ${ep.models.length} 个模型进行并发测试。\n遇到不支持对话（如 tts / dall-e）或失效的模型将被自动剔除。\n\n当前设置并发数为：${concurrency}，确定继续吗？`)) return;
 
     res.className = "ping-res wait"; 
     
@@ -540,7 +559,6 @@
     let completed = 0;
     const working = [];
     const failed = [];
-    const concurrency = 12; // 设置并发数为 5，兼顾速度与上游防封限制
 
     // 定义并发工作者
     async function worker() {
@@ -559,11 +577,11 @@
         } catch(e) { failed.push(m); }
         
         completed++;
-        res.textContent = `并发自测中 (${completed}/${total}) 进度... 正在校验中`;
+        res.textContent = `并发自测中 (${completed}/${total}) 进度... [当前并发: ${concurrency}]`;
       }
     }
 
-    // 启动 5 个并发 Worker 去消耗队列
+    // 启动指定数量的并发 Worker 去消耗队列
     const workers = [];
     for (let i = 0; i < Math.min(concurrency, total); i++) {
         workers.push(worker());
@@ -582,6 +600,8 @@
   async function testAllModelsGlobally() {
     if (!connected) return toast("先连接控制台", "err");
     const key = $("proxyKey").value.trim();
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    
     if (!key) {
         $("proxyKey").focus();
         return toast("全库自测依赖鉴权，请先在此框填入 PROXY_API_KEY", "err");
@@ -591,7 +611,7 @@
     const modelsToTest = modelCatalog.map(x => x.model);
     if (!modelsToTest.length) return toast("下拉库当前是空的，暂无模型可测", "err");
 
-    if(!confirm(`魔法测活：系统将对这 ${modelsToTest.length} 个模型进行并发清洗。\n采用 5 线程并发机制，测试结束后，将自动从所有站点中【永久剔除】不可用的残废模型。\n\n确定开始吗？`)) return;
+    if(!confirm(`魔法测活：系统将对这 ${modelsToTest.length} 个模型进行并发清洗。\n采用 ${concurrency} 线程并发机制，测试结束后将自动从所有站点中【永久剔除】不可用的死模型。\n\n确定开始吗？`)) return;
 
     const out = $("testOut"); 
     out.style.display = "block"; 
@@ -601,7 +621,6 @@
     let completed = 0;
     const working = new Set();
     const failed = new Set();
-    const concurrency = 5;
 
     async function worker() {
         while (queue.length > 0) {
@@ -617,7 +636,7 @@
             } catch (err) { failed.add(m); }
 
             completed++;
-            out.textContent = `[魔法全库并发测活] 当前进度: ${completed} / ${total}\n最后处理模型: ${m}\n(并发加速中，并发数: ${concurrency})`;
+            out.textContent = `[魔法全库并发测活] 进度: ${completed} / ${total}\n[并发设置: ${concurrency}线程] 刚刚测试模型: ${m}`;
         }
     }
 

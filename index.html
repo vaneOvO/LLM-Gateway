@@ -91,68 +91,37 @@
   .empty { color: var(--faint); font-size: 13px; text-align: center; padding: 26px 0; font-family: var(--mono); }
   .locked { opacity: .4; pointer-events: none; }
 
-  /* ===== 核心修改：全面美化自定义可搜索下拉与删除按钮 ===== */
+  /* 自定义下拉框样式 */
   .combo { position: relative; flex: 1; min-width: 0; }
-  .combo > input { 
-    padding-right: 34px; 
-    transition: border-color .15s, box-shadow .15s;
-    cursor: text;
-  }
-  .combo > input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px #34d39920;
-  }
-  /* 下拉指示小箭头 */
-  .combo-arrow {
-    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-    width: 14px; height: 14px; color: var(--muted); pointer-events: none;
-    transition: transform 0.2s;
-  }
-  /* 清空按钮 */
-  .combo-clear { 
-    position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px;
-    padding: 0; line-height: 1; font-size: 16px; border: none; background: transparent; color: var(--faint);
-    border-radius: 6px; display: none; cursor: pointer; transition: color .15s;
-  }
+  .combo > input { padding-right: 34px; transition: border-color .15s, box-shadow .15s; cursor: text; }
+  .combo > input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #34d39920; }
+  .combo-arrow { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--muted); pointer-events: none; transition: transform 0.2s; }
+  .combo-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; padding: 0; line-height: 1; font-size: 16px; border: none; background: transparent; color: var(--faint); border-radius: 6px; display: none; cursor: pointer; transition: color .15s; }
   .combo-clear:hover { background: var(--line); color: var(--text); }
-  /* 输入框有值时：隐藏箭头，显示清空按钮 */
   .combo.has-val .combo-clear { display: block; }
   .combo.has-val .combo-arrow { display: none; }
-  /* 展开时箭头动画 */
   .combo.open .combo-arrow { transform: translateY(-50%) rotate(180deg); }
-
-  /* 下拉菜单动画与样式 */
-  .combo-menu { 
-    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px;
-    max-height: 280px; overflow-y: auto; box-shadow: 0 12px 30px #00000080; 
-    visibility: hidden; opacity: 0; transform: translateY(-4px); 
-    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
-  }
+  .combo-menu { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px; max-height: 280px; overflow-y: auto; box-shadow: 0 12px 30px #00000080; visibility: hidden; opacity: 0; transform: translateY(-4px); transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s; }
   .combo-menu.open { visibility: visible; opacity: 1; transform: translateY(0); }
-  
-  .combo-item { 
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--text); 
-    transition: background 0.1s;
-  }
+  .combo-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--text); transition: background 0.1s; }
   .combo-item:hover, .combo-item.active { background: var(--line); }
   .combo-item .nm { font-family: var(--mono); font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .combo-item .upstreams { font-size: 11px; color: var(--faint); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .combo-badge { flex: none; font-size: 11px; color: var(--accent); background: #34d39915;
-    border: 1px solid #34d39930; border-radius: 999px; padding: 1px 8px; font-weight: 600; }
+  .combo-badge { flex: none; font-size: 11px; color: var(--accent); background: #34d39915; border: 1px solid #34d39930; border-radius: 999px; padding: 1px 8px; font-weight: 600; }
   .combo-none { padding: 16px 10px; color: var(--faint); font-size: 12.5px; font-family: var(--mono); text-align: center; }
 
-  /* 删除按钮 */
-  .btn-delete {
-    flex: none; display: inline-flex; align-items: center; justify-content: center;
-    width: 38px; height: 38px; padding: 0; border: 1px solid var(--danger);
-    background-color: transparent; color: var(--danger-text); border-radius: 8px;
-    cursor: pointer; transition: all .15s ease;
-  }
+  /* 删除与自测过滤按钮 */
+  .btn-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); background-color: transparent; border-radius: 8px; cursor: pointer; transition: all .15s ease; }
+  .btn-icon svg { width: 16px; height: 16px; }
+  
+  .btn-delete { color: var(--danger-text); border-color: var(--danger); }
   .btn-delete:hover { background-color: #fb71851a; border-color: var(--danger-text); transform: scale(1.02); }
   .btn-delete:active { transform: scale(0.96); }
-  .btn-delete svg { width: 16px; height: 16px; }
+  
+  /* 魔法过滤按钮：黄/蓝色高亮 */
+  .btn-magic { color: var(--warn); border-color: #fbbf2450; }
+  .btn-magic:hover { background-color: #fbbf2415; border-color: var(--warn); transform: scale(1.02); }
+  .btn-magic:active { transform: scale(0.96); }
 </style>
 </head>
 <body>
@@ -179,10 +148,10 @@
 
   <section class="card" id="cfgCard">
     <h2>上游站点</h2>
-    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个（失败的冷却 30 秒）。给多家填上同一个模型即可自动负载均衡 + 故障转移。</div>
+    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个。给多家填上同一个模型即可自动负载均衡 + 故障转移。</div>
     <div class="toolbar">
       <button class="primary mini" id="addBtn">+ 新增站点</button>
-      <button class=\"mini\" id="saveBtn" disabled>保存配置</button>
+      <button class="mini" id="saveBtn" disabled>保存配置</button>
       <span class="spacer"></span>
       <button class="mini ghost" id="refreshStatsBtn">刷新统计</button>
       <button class="mini ghost" id="resetStatsBtn">清零统计</button>
@@ -200,19 +169,17 @@
       <label>调用示例（鉴权用 PROXY_API_KEY，model 直接写模型名）</label>
       <pre id="curlBox">—</pre>
     </div>
-    <div class="hint">model 写「模型名」会在所有提供该模型的上游里自动挑延迟最低的、失败自动换下一个；写「站点名/模型名」则指定上游。PROXY_API_KEY 单独设；各上游 key 只在服务端，不下发。</div>
   </section>
 
   <section class="card">
-    <h2>调用测试</h2>
+    <h2>调用测试与清洗</h2>
     <div class="row" style="margin-bottom:12px;">
       <div>
-        <label>PROXY_API_KEY</label>
+        <label>PROXY_API_KEY（测试/清洗模型必备）</label>
         <input id="proxyKey" type="password" placeholder="后台设的 PROXY_API_KEY" />
       </div>
       <div style="flex: 1.5;">
-        <label>模型（可下拉选择搜索，支持自由填入 站点/模型名）</label>
-        <!-- 核心修改区：整合框框与删除按钮 -->
+        <label>下拉仅展示已清洗可用模型（支持自由填入 站点/模型名）</label>
         <div style="display: flex; gap: 8px; align-items: center;">
           <div class="combo" id="modelCombo">
             <input id="testModel" autocomplete="off" placeholder="gemini-3.5-flash" />
@@ -220,8 +187,14 @@
             <button type="button" class="combo-clear" id="modelClear" title="清空">&times;</button>
             <div class="combo-menu" id="modelMenu"></div>
           </div>
-          <!-- 新增：全局删除模型按钮 -->
-          <button type="button" class="btn-delete" id="delModelBtn" title="一键从所有上游中彻底移除该模型">
+          <!-- 全局测活清理按钮 -->
+          <button type="button" class="btn-icon btn-magic" id="globalTestBtn" title="全库自测：扫描下拉框并自动剔除不可用的死模型">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+            </svg>
+          </button>
+          <!-- 删除选中按钮 -->
+          <button type="button" class="btn-icon btn-delete" id="delModelBtn" title="一键从所有上游中彻底移除选中的模型">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
             </svg>
@@ -234,7 +207,7 @@
       <textarea id="testMsg" placeholder="hello">hello</textarea>
     </div>
     <div class="bar">
-      <button class="primary" id="testBtn">发送</button>
+      <button class="primary" id="testBtn">发送 / 测试选中模型</button>
       <span class="spacer"></span>
     </div>
     <pre id="testOut" style="display:none;"></pre>
@@ -342,12 +315,13 @@
             <textarea data-f="apiKeys" data-i="${idx}" placeholder="sk-...">${escapeHtml((ep.apiKeys || []).join("\n"))}</textarea>
           </div>
           <div class="field">
-            <label>模型（每行一个，可留空=通配；点「拉取模型」自动填）</label>
+            <label>模型（每行一个，可留空=通配；拉取后可点底部的【筛选可用】测活）</label>
             <textarea data-f="models" data-i="${idx}" placeholder="gpt-4o">${escapeHtml((ep.models || []).join("\n"))}</textarea>
           </div>
           <div class="ep-foot">
             <button class="mini ghost" data-ping="${idx}">测试连通</button>
             <button class="mini ghost" data-fetch="${idx}">拉取模型</button>
+            <button class="mini ghost" style="color:var(--warn); border-color:rgba(251,191,36,0.3);" data-selftest="${idx}">筛选可用</button>
             <span class="ping-res" data-pingres="${idx}"></span>
             <span class="spacer"></span>
             <span class="ep-stats" data-stat="${idx}">${statLine(ep.baseUrl)}</span>
@@ -385,8 +359,10 @@
       endpoints.splice(i, 1);
       render();
     }));
+    
     list.querySelectorAll("[data-ping]").forEach((b) => b.addEventListener("click", () => pingEndpoint(+b.dataset.ping)));
     list.querySelectorAll("[data-fetch]").forEach((b) => b.addEventListener("click", () => fetchModels(+b.dataset.fetch)));
+    list.querySelectorAll("[data-selftest]").forEach((b) => b.addEventListener("click", () => selfTestEndpoint(+b.dataset.selftest)));
     refreshUsage();
   }
 
@@ -402,7 +378,6 @@
     buildModelCatalog();
   }
 
-  // ===== 核心修改：模型聚合统计（含具体站点名称追踪） =====
   let modelCatalog = [];
   function buildModelCatalog() {
     const providers = {};
@@ -413,19 +388,14 @@
         if (!providers[mm].includes(upName)) providers[mm].push(upName);
       });
     });
-    // 组装并排序，生成展示所需的数组
     modelCatalog = Object.keys(providers).sort().map((model) => ({ 
-      model, 
-      count: providers[model].length,
-      upstreams: providers[model]
+      model, count: providers[model].length, upstreams: providers[model]
     }));
     syncClear();
     renderModelMenu($("testModel").value.trim());
   }
 
-  function syncClear() {
-    $("modelCombo").classList.toggle("has-val", !!$("testModel").value.trim());
-  }
+  function syncClear() { $("modelCombo").classList.toggle("has-val", !!$("testModel").value.trim()); }
 
   function renderModelMenu(filter) {
     const menu = $("modelMenu");
@@ -437,7 +407,6 @@
       return;
     }
     
-    // 核心修改：重写下拉菜单项，显示来源于哪些上游站点的详情
     menu.innerHTML = items
       .map((x) => `<div class="combo-item" data-m="${escapeAttr(x.model)}">
           <div style="display:flex; flex-direction:column; overflow:hidden;">
@@ -458,15 +427,8 @@
     });
   }
   
-  function openModelMenu() { 
-    renderModelMenu($("testModel").value.trim()); 
-    $("modelMenu").classList.add("open"); 
-    $("modelCombo").classList.add("open"); // 触发箭头旋转动画
-  }
-  function closeModelMenu() { 
-    $("modelMenu").classList.remove("open"); 
-    $("modelCombo").classList.remove("open");
-  }
+  function openModelMenu() { renderModelMenu($("testModel").value.trim()); $("modelMenu").classList.add("open"); $("modelCombo").classList.add("open"); }
+  function closeModelMenu() { $("modelMenu").classList.remove("open"); $("modelCombo").classList.remove("open"); }
 
   async function loadStats() {
     try {
@@ -496,7 +458,7 @@
       const r = await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || r.status);
-      endpoints = data.endpoints || []; render(); toast("已保存", "ok");
+      endpoints = data.endpoints || []; render(); toast("已保存配置", "ok");
     } catch (err) { toast("保存失败：" + err.message, "err"); }
   }
 
@@ -553,8 +515,106 @@
       render();                            
       const res2 = document.querySelector(`[data-pingres="${idx}"]`);
       res2.className = "ping-res ok";
-      res2.textContent = `✓ 拉到 ${d.models.length} 个模型 · 记得点「保存配置」`;
+      res2.textContent = `✓ 拉到 ${d.models.length} 个模型 · 建议点 [筛选可用] 进行测活清洗`;
     } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
+  }
+
+  // 局部自测：清洗某个站点的模型
+  async function selfTestEndpoint(idx) {
+    const ep = endpoints[idx];
+    const key = $("proxyKey").value.trim();
+    const res = document.querySelector(`[data-pingres="${idx}"]`);
+    
+    if (!key) { res.className = "ping-res err"; res.textContent = "✗ 请先在最下方填写 PROXY_API_KEY"; return toast("自测依赖代理身份验证，请先填入 PROXY_API_KEY", "err"); }
+    if (!ep.models || !ep.models.length) { res.className = "ping-res err"; res.textContent = "✗ 暂无模型可清洗"; return; }
+
+    if (!confirm(`即将对该站点的 ${ep.models.length} 个模型逐一进行真实对话请求测试。\n遇到不支持对话（如 tts / dallel）或失效的模型将被自动剔除掉。\n如果数量多，这可能会花费较长时间，确定继续吗？`)) return;
+
+    res.className = "ping-res wait"; 
+    const working = [];
+    const failed = [];
+    
+    // 强制先保存以保证路由存在
+    await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) });
+
+    for (let i = 0; i < ep.models.length; i++) {
+        const m = ep.models[i];
+        res.textContent = `自测中 (${i+1}/${ep.models.length}) 进度... 正在测试: ${m} `;
+        try {
+            // 如有特定路由，指定路由前缀避免负载到别家
+            const routeModel = ep.name ? `${ep.name}/${m}` : m;
+            const r = await fetch("/v1/chat/completions", {
+                method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+                body: JSON.stringify({ model: routeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
+            });
+            const d = await r.json();
+            if (r.ok && d.choices && d.choices.length > 0) { working.push(m); } 
+            else { failed.push(m); }
+        } catch(e) { failed.push(m); }
+    }
+
+    ep.models = working;
+    render();
+    save(); // 测试完自动保存
+    const finalRes = document.querySelector(`[data-pingres="${idx}"]`);
+    finalRes.className = "ping-res ok";
+    finalRes.textContent = `✓ 测活完成！保留有效 ${working.length} 个，剔除无效 ${failed.length} 个 (已保存)。`;
+  }
+
+  // 全局自测：遍历整个系统进行死模型清洗
+  async function testAllModelsGlobally() {
+    if (!connected) return toast("先连接控制台", "err");
+    const key = $("proxyKey").value.trim();
+    if (!key) {
+        $("proxyKey").focus();
+        return toast("全库自测依赖鉴权，请先在此框填入 PROXY_API_KEY", "err");
+    }
+    
+    buildModelCatalog();
+    const modelsToTest = modelCatalog.map(x => x.model);
+    if (!modelsToTest.length) return toast("下拉库当前是空的，暂无模型可测", "err");
+
+    if(!confirm(`魔法测活：系统将逐一测试这 ${modelsToTest.length} 个模型（发送极小 Token 的 hi 请求）。\n测试结束后，将自动从所有站点中【永久剔除】不可用的残废模型。\n\n这可能需要一两分钟时间，确定开始吗？`)) return;
+
+    const out = $("testOut"); 
+    out.style.display = "block"; 
+    const working = new Set();
+    const failed = new Set();
+
+    for (let i = 0; i < modelsToTest.length; i++) {
+        const m = modelsToTest[i];
+        out.textContent = `[魔法全库测活] 正在测试进度: ${i+1} / ${modelsToTest.length}\n正在校验模型: ${m} ...`;
+        try {
+            const r = await fetch("/v1/chat/completions", {
+                method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+                body: JSON.stringify({ model: m, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
+            });
+            const d = await r.json();
+            if (r.ok && d.choices && d.choices.length > 0) { working.add(m); } 
+            else { failed.add(m); }
+        } catch (err) { failed.add(m); }
+    }
+
+    out.textContent = `[魔法全库测活] 测试完成！\n✅ 可用健康模型: ${working.size} 个\n❌ 剔除死链模型: ${failed.size} 个\n\n正在自动清理配置并保存云端...`;
+
+    // 执行跨端清理逻辑
+    if (failed.size > 0) {
+        let changed = false;
+        endpoints.forEach(ep => {
+            if (ep.models) {
+                const oldLen = ep.models.length;
+                ep.models = ep.models.filter(m => !failed.has(m));
+                if (ep.models.length !== oldLen) changed = true;
+            }
+        });
+        if (changed) {
+            render();
+            await save();
+            out.textContent += "\n✨ 清洗完毕！现在下拉框里展示的全部是可用模型！";
+        }
+    } else {
+        out.textContent += "\n✨ 恭喜，所有模型均正常可用，无需清理。";
+    }
   }
 
   async function test() {
@@ -577,58 +637,48 @@
     } catch (err) { out.textContent = "请求出错：" + err.message; }
   }
 
-  // ===== 核心修改：真正的跨端删除模型逻辑 =====
+  // 全局删除单一模型逻辑
   $("delModelBtn").addEventListener("click", () => {
     if (!connected) return toast("先连接控制台", "err");
     const modelToDelete = $("testModel").value.trim();
     if (!modelToDelete) return toast("请先下拉选择或输入要删除的模型", "err");
     
-    // 检查是否有该模型
     let found = false;
-    endpoints.forEach(ep => {
-      if ((ep.models || []).includes(modelToDelete)) found = true;
-    });
-
-    if (!found) {
-      return toast("当前所有站点的配置中均不存在该模型", "err");
-    }
+    endpoints.forEach(ep => { if ((ep.models || []).includes(modelToDelete)) found = true; });
+    if (!found) return toast("当前所有站点的配置中均不存在该模型", "err");
 
     if (confirm(`危险操作：确定要从【所有上游】中彻底移除模型 "${modelToDelete}" 吗？\n（操作后将自动触发保存配置）`)) {
       let changed = false;
       endpoints.forEach(ep => {
         if (ep.models) {
           const oldLen = ep.models.length;
-          // 从当前站点的数组中过滤掉该模型
           ep.models = ep.models.filter(m => m !== modelToDelete);
           if (ep.models.length !== oldLen) changed = true;
         }
       });
-      
       if (changed) {
         $("testModel").value = "";
         syncClear();
-        render();  // 这会重绘所有的 textareas，UI会立刻刷新消除模型名
-        save();    // 触发网络请求将更新后的配置直接覆写进 Cloudflare KV
+        render(); 
+        save();   
         toast(`已删除模型: ${modelToDelete}`, "ok");
       }
     }
   });
 
-  function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
-  function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
-
   $("connectBtn").addEventListener("click", connect);
   $("addBtn").addEventListener("click", () => {
     if (!connected) return toast("先连接控制台", "err");
     const ne = { name: "", baseUrl: "", apiKeys: [], models: [], _uid: ++uidSeq };
-    endpoints.unshift(ne);     
-    openSet.add(ne._uid);      
-    render();
+    endpoints.unshift(ne); openSet.add(ne._uid); render();
   });
   $("saveBtn").addEventListener("click", save);
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);
+  
+  // 绑定全局一键测活
+  $("globalTestBtn").addEventListener("click", testAllModelsGlobally);
 
   $("testModel").addEventListener("focus", openModelMenu);
   $("testModel").addEventListener("input", () => { syncClear(); openModelMenu(); });

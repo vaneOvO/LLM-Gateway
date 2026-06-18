@@ -53,10 +53,35 @@
   button.link { background: none; border: none; color: var(--danger-text); padding: 6px 8px; }
   button.link:hover { background: var(--danger); }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  .ep { border: 1px solid var(--line-soft); border-radius: 10px; padding: 14px; margin-bottom: 12px; background: var(--panel-2); border-left: 3px solid var(--accent-dim); }
-  .ep .ep-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
-  .ep .ep-head .map { font-family: var(--mono); font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
-  .ep .ep-head .map b { color: var(--accent); font-weight: 600; }
+  .ep { border: 1px solid var(--line-soft); border-radius: 10px; margin-bottom: 10px; background: var(--panel-2); border-left: 3px solid var(--accent-dim); overflow: hidden; }
+  /* 折叠头(常显的一行摘要) */
+  .ep-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; user-select: none; }
+  .ep-row:hover { background: #1a212b; }
+  .ep-row .nm { font-family: var(--mono); font-weight: 600; color: var(--accent); flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-row .nm.unnamed { color: var(--faint); font-weight: 500; }
+  .ep-row .url { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 60px; }
+  .ep-row .meta { font-family: var(--mono); font-size: 11.5px; color: var(--faint); flex: none; white-space: nowrap; }
+  .ep-row .meta .ok { color: var(--accent); } .ep-row .meta .err { color: var(--danger-text); }
+  .ep-row .chev { color: var(--faint); transition: transform .15s; flex: none; font-size: 11px; }
+  .ep.open .ep-row .chev { transform: rotate(90deg); }
+  .ep-row .del { color: var(--danger-text); background: none; border: none; padding: 4px 8px; font-size: 12px; flex: none; }
+  .ep-row .del:hover { background: var(--danger); border-radius: 6px; }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+  .sdot.ok { background: var(--accent); } .sdot.err { background: var(--danger-text); }
+  /* 折叠体(展开才显示) */
+  .ep-body { display: none; padding: 0 14px 14px; border-top: 1px solid var(--line-soft); }
+  .ep.open .ep-body { display: block; }
+  .ep-body .field:first-child { margin-top: 12px; }
+  /* 拖拽排序 */
+  .ep.dragging { opacity: .45; }
+  .ep.drop-before { box-shadow: inset 0 3px 0 0 var(--accent); }
+  .ep.drop-after { box-shadow: inset 0 -3px 0 0 var(--accent); }
+  .drag-handle { cursor: grab; color: var(--faint); flex: none; font-size: 13px; letter-spacing: -2px; }
+  .drag-handle:active { cursor: grabbing; }
+  /* 未保存高亮 */
+  #saveBtn { background: var(--panel-2); color: var(--muted); border-color: var(--line); }
+  #saveBtn.dirty { background: var(--accent); color: #06130d; border-color: var(--accent); animation: savePulse 1.8s ease-in-out infinite; }
+  @keyframes savePulse { 0%,100% { box-shadow: 0 0 0 0 #34d39900; } 50% { box-shadow: 0 0 0 4px #34d39933; } }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
   .field { margin-bottom: 12px; } .field:last-child { margin-bottom: 0; }
@@ -122,17 +147,15 @@
 
   <section class="card" id="cfgCard">
     <h2>上游站点</h2>
-    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个（失败的冷却 30 秒）。给多家填上同一个模型即可自动负载均衡 + 故障转移。延迟显示在每个站点右下。</div>
+    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个（失败的冷却 30 秒）。给多家填上同一个模型即可自动负载均衡 + 故障转移。</div>
     <div class="toolbar">
+      <button class="primary mini" id="addBtn">+ 新增站点</button>
+      <button class="mini" id="saveBtn" disabled>保存配置</button>
+      <span class="spacer"></span>
       <button class="mini ghost" id="refreshStatsBtn">刷新统计</button>
       <button class="mini ghost" id="resetStatsBtn">清零统计</button>
     </div>
     <div id="epList"></div>
-    <div class="bar">
-      <button class="ghost" id="addBtn">+ 新增站点</button>
-      <span class="spacer"></span>
-      <button class="primary" id="saveBtn" disabled>保存配置</button>
-    </div>
   </section>
 
   <section class="card">
@@ -197,6 +220,10 @@
   let endpoints = [];
   let stats = {};
   let connected = false;
+  let uidSeq = 0;            // 给每个站点一个稳定 id，用于记住展开状态
+  const openSet = new Set(); // 展开中的站点 uid
+  let dragUid = null;        // 拖拽中的站点 uid
+  let dirty = false;         // 有未保存改动
 
   let toastTimer;
   function toast(msg, kind = "ok") {
@@ -222,60 +249,104 @@
     return `调用 <b>${s.total}</b> · <span class="ok">ok ${s.ok}</span> · <span class="err">err ${s.err}</span>${lat} · 最近 ${last}`;
   }
 
+  function statusDot(s) {
+    if (!s || !s.total) return "sdot";
+    if (s.ok > 0) return "sdot ok";
+    if (s.err > 0) return "sdot err";
+    return "sdot";
+  }
+  function rowMeta(ep) {
+    const s = stats[ep.baseUrl] || {};
+    const parts = [`×${(ep.models || []).length} 模型`];
+    if (typeof s.latMs === "number") parts.push(`~${s.latMs}ms`);
+    if (s.total) parts.push(`<span class="ok">ok ${s.ok}</span>/<span class="err">err ${s.err}</span>`);
+    return parts.join(" · ");
+  }
+
   function render() {
     const list = $("epList");
     list.innerHTML = "";
-    if (!endpoints.length) list.innerHTML = '<div class="empty">还没有站点。点下方「新增站点」开始。</div>';
+    if (!endpoints.length) {
+      list.innerHTML = '<div class="empty">还没有站点。点上方「+ 新增站点」开始。</div>';
+      refreshUsage();
+      return;
+    }
 
     endpoints.forEach((ep, idx) => {
+      if (ep._uid == null) ep._uid = ++uidSeq;
+      const open = openSet.has(ep._uid);
       const el = document.createElement("div");
-      el.className = "ep";
+      el.className = "ep" + (open ? " open" : "");
       el.innerHTML = `
-        <div class="ep-head">
-          <div class="map"><b>${escapeHtml(ep.name || "未命名")}</b>/&lt;model&gt; &rarr; ${escapeHtml(ep.baseUrl || "…")}</div>
-          <button class="link" data-del="${idx}">删除</button>
+        <div class="ep-row" data-row="${idx}">
+          <span class="${statusDot(stats[ep.baseUrl])}"></span>
+          <span class="nm ${ep.name ? "" : "unnamed"}">${escapeHtml(ep.name || "未命名")}</span>
+          <span class="url">${escapeHtml(ep.baseUrl || "未填 Base URL")}</span>
+          <span class="meta">${rowMeta(ep)}</span>
+          <button class="del" data-del="${idx}">删除</button>
+          <span class="chev">&#9654;</span>
         </div>
-        <div class="grid2">
-          <div class="field">
-            <label>站点名（调用前缀，不能含 /）</label>
-            <input data-f="name" data-i="${idx}" value="${escapeAttr(ep.name)}" placeholder="freeapi" />
+        <div class="ep-body">
+          <div class="grid2">
+            <div class="field">
+              <label>站点名（可留空；仅作标签，不影响按模型名的选路）</label>
+              <input data-f="name" data-i="${idx}" value="${escapeAttr(ep.name)}" placeholder="freeapi" />
+            </div>
+            <div class="field">
+              <label>Base URL（OpenAI 兼容根，填到 /v1，别带 /models）</label>
+              <input data-f="baseUrl" data-i="${idx}" value="${escapeAttr(ep.baseUrl)}" placeholder="https://xxx/v1" />
+            </div>
           </div>
           <div class="field">
-            <label>Base URL（OpenAI 兼容根，通常以 /v1 结尾）</label>
-            <input data-f="baseUrl" data-i="${idx}" value="${escapeAttr(ep.baseUrl)}" placeholder="https://xxx/v1" />
+            <label>API Keys（每行一个，多个会随机轮换）</label>
+            <textarea data-f="apiKeys" data-i="${idx}" placeholder="sk-...">${escapeHtml((ep.apiKeys || []).join("\n"))}</textarea>
           </div>
-        </div>
-        <div class="field">
-          <label>API Keys（每行一个，多个会随机轮换）</label>
-          <textarea data-f="apiKeys" data-i="${idx}" placeholder="sk-...">${escapeHtml((ep.apiKeys || []).join("\n"))}</textarea>
-        </div>
-        <div class="field">
-          <label>模型（每行一个，可留空；填了 /v1/models 会列出来）</label>
-          <textarea data-f="models" data-i="${idx}" placeholder="gpt-4o">${escapeHtml((ep.models || []).join("\n"))}</textarea>
-        </div>
-        <div class="ep-foot">
-          <button class="mini ghost" data-ping="${idx}">测试连通</button>
-          <button class="mini ghost" data-fetch="${idx}">拉取模型</button>
-          <span class="ping-res" data-pingres="${idx}"></span>
-          <span class="spacer"></span>
-          <span class="ep-stats" data-stat="${idx}">${statLine(ep.baseUrl)}</span>
+          <div class="field">
+            <label>模型（每行一个，可留空=通配；点「拉取模型」自动填）</label>
+            <textarea data-f="models" data-i="${idx}" placeholder="gpt-4o">${escapeHtml((ep.models || []).join("\n"))}</textarea>
+          </div>
+          <div class="ep-foot">
+            <button class="mini ghost" data-ping="${idx}">测试连通</button>
+            <button class="mini ghost" data-fetch="${idx}">拉取模型</button>
+            <span class="ping-res" data-pingres="${idx}"></span>
+            <span class="spacer"></span>
+            <span class="ep-stats" data-stat="${idx}">${statLine(ep.baseUrl)}</span>
+          </div>
         </div>`;
       list.appendChild(el);
     });
 
+    // 折叠头点击展开/收起（删除按钮除外）
+    list.querySelectorAll(".ep-row").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".del")) return;
+        const ep = endpoints[+row.dataset.row];
+        const card = row.closest(".ep");
+        if (openSet.has(ep._uid)) { openSet.delete(ep._uid); card.classList.remove("open"); }
+        else { openSet.add(ep._uid); card.classList.add("open"); }
+      });
+    });
+
+    // 编辑输入：更新数据 + 同步摘要行（不整体重绘，避免打断输入）
     list.querySelectorAll("[data-f]").forEach((node) => {
       node.addEventListener("input", (e) => {
         const i = +e.target.dataset.i, f = e.target.dataset.f;
         if (f === "apiKeys" || f === "models") endpoints[i][f] = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
         else endpoints[i][f] = e.target.value;
-        if (f === "name" || f === "baseUrl") {
-          const head = e.target.closest(".ep").querySelector(".map");
-          head.innerHTML = `<b>${escapeHtml(endpoints[i].name || "未命名")}</b>/&lt;model&gt; &rarr; ${escapeHtml(endpoints[i].baseUrl || "…")}`;
-        }
-        if (f === "baseUrl") e.target.closest(".ep").querySelector(".ep-stats").innerHTML = statLine(endpoints[i].baseUrl);
+        const card = e.target.closest(".ep");
+        if (f === "name") { const nm = card.querySelector(".ep-row .nm"); nm.textContent = endpoints[i].name || "未命名"; nm.classList.toggle("unnamed", !endpoints[i].name); }
+        if (f === "baseUrl") { card.querySelector(".ep-row .url").textContent = endpoints[i].baseUrl || "未填 Base URL"; card.querySelector(".ep-stats").innerHTML = statLine(endpoints[i].baseUrl); card.querySelector(".ep-row .meta").innerHTML = rowMeta(endpoints[i]); }
+        if (f === "models") { card.querySelector(".ep-row .meta").innerHTML = rowMeta(endpoints[i]); buildModelCatalog(); }
       });
     });
-    list.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => { endpoints.splice(+b.dataset.del, 1); render(); }));
+
+    list.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const i = +b.dataset.del;
+      if (endpoints[i]) openSet.delete(endpoints[i]._uid);
+      endpoints.splice(i, 1);
+      render();
+    }));
     list.querySelectorAll("[data-ping]").forEach((b) => b.addEventListener("click", () => pingEndpoint(+b.dataset.ping)));
     list.querySelectorAll("[data-fetch]").forEach((b) => b.addEventListener("click", () => fetchModels(+b.dataset.fetch)));
     refreshUsage();
@@ -446,7 +517,13 @@
   function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
   $("connectBtn").addEventListener("click", connect);
-  $("addBtn").addEventListener("click", () => { if (!connected) return toast("先连接控制台", "err"); endpoints.push({ name: "", baseUrl: "", apiKeys: [], models: [] }); render(); });
+  $("addBtn").addEventListener("click", () => {
+    if (!connected) return toast("先连接控制台", "err");
+    const ne = { name: "", baseUrl: "", apiKeys: [], models: [], _uid: ++uidSeq };
+    endpoints.unshift(ne);     // 插到最上面
+    openSet.add(ne._uid);      // 自动展开
+    render();
+  });
   $("saveBtn").addEventListener("click", save);
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("resetStatsBtn").addEventListener("click", resetStats);

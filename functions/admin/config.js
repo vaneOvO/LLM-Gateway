@@ -53,7 +53,7 @@ export async function onRequestPut({ request, env }) {
         .map((m) => String(m).trim())
         .filter(Boolean),
     }))
-    .filter((e) => e.name && e.baseUrl);
+    .filter((e) => e.baseUrl);   // 只要求 Base URL；站点名可留空（仅作标签，不参与按模型名的自动选路）
 
   // name 不允许含 "/"（否则会和 model 路由冲突）。允许同名——同名即视为一个「组」，
   // 调用 组名/模型名 时网关会在该组里按延迟选最优上游并故障转移。

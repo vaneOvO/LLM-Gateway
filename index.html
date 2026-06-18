@@ -519,7 +519,7 @@
     } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
   }
 
-  // 局部自测：清洗某个站点的模型
+  // 局部并发自测：清洗某个站点的模型
   async function selfTestEndpoint(idx) {
     const ep = endpoints[idx];
     const key = $("proxyKey").value.trim();
@@ -528,18 +528,24 @@
     if (!key) { res.className = "ping-res err"; res.textContent = "✗ 请先在最下方填写 PROXY_API_KEY"; return toast("自测依赖代理身份验证，请先填入 PROXY_API_KEY", "err"); }
     if (!ep.models || !ep.models.length) { res.className = "ping-res err"; res.textContent = "✗ 暂无模型可清洗"; return; }
 
-    if (!confirm(`即将对该站点的 ${ep.models.length} 个模型逐一进行真实对话请求测试。\n遇到不支持对话（如 tts / dallel）或失效的模型将被自动剔除掉。\n如果数量多，这可能会花费较长时间，确定继续吗？`)) return;
+    if (!confirm(`即将对该站点的 ${ep.models.length} 个模型进行并发测试。\n遇到不支持对话（如 tts / dall-e）或失效的模型将被自动剔除。\n为了防拦截，系统将以最多 5 个请求同时进行的并发速度测试，确定继续吗？`)) return;
 
     res.className = "ping-res wait"; 
-    const working = [];
-    const failed = [];
     
     // 强制先保存以保证路由存在
     await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) });
 
-    for (let i = 0; i < ep.models.length; i++) {
-        const m = ep.models[i];
-        res.textContent = `自测中 (${i+1}/${ep.models.length}) 进度... 正在测试: ${m} `;
+    const queue = [...ep.models];
+    const total = queue.length;
+    let completed = 0;
+    const working = [];
+    const failed = [];
+    const concurrency = 5; // 设置并发数为 5，兼顾速度与上游防封限制
+
+    // 定义并发工作者
+    async function worker() {
+      while (queue.length > 0) {
+        const m = queue.shift();
         try {
             // 如有特定路由，指定路由前缀避免负载到别家
             const routeModel = ep.name ? `${ep.name}/${m}` : m;
@@ -551,7 +557,18 @@
             if (r.ok && d.choices && d.choices.length > 0) { working.push(m); } 
             else { failed.push(m); }
         } catch(e) { failed.push(m); }
+        
+        completed++;
+        res.textContent = `并发自测中 (${completed}/${total}) 进度... 正在校验中`;
+      }
     }
+
+    // 启动 5 个并发 Worker 去消耗队列
+    const workers = [];
+    for (let i = 0; i < Math.min(concurrency, total); i++) {
+        workers.push(worker());
+    }
+    await Promise.all(workers);
 
     ep.models = working;
     render();
@@ -561,7 +578,7 @@
     finalRes.textContent = `✓ 测活完成！保留有效 ${working.length} 个，剔除无效 ${failed.length} 个 (已保存)。`;
   }
 
-  // 全局自测：遍历整个系统进行死模型清洗
+  // 全局并发自测：遍历整个系统进行死模型清洗
   async function testAllModelsGlobally() {
     if (!connected) return toast("先连接控制台", "err");
     const key = $("proxyKey").value.trim();
@@ -574,26 +591,41 @@
     const modelsToTest = modelCatalog.map(x => x.model);
     if (!modelsToTest.length) return toast("下拉库当前是空的，暂无模型可测", "err");
 
-    if(!confirm(`魔法测活：系统将逐一测试这 ${modelsToTest.length} 个模型（发送极小 Token 的 hi 请求）。\n测试结束后，将自动从所有站点中【永久剔除】不可用的残废模型。\n\n这可能需要一两分钟时间，确定开始吗？`)) return;
+    if(!confirm(`魔法测活：系统将对这 ${modelsToTest.length} 个模型进行并发清洗。\n采用 5 线程并发机制，测试结束后，将自动从所有站点中【永久剔除】不可用的残废模型。\n\n确定开始吗？`)) return;
 
     const out = $("testOut"); 
     out.style.display = "block"; 
+
+    const queue = [...modelsToTest];
+    const total = queue.length;
+    let completed = 0;
     const working = new Set();
     const failed = new Set();
+    const concurrency = 5;
 
-    for (let i = 0; i < modelsToTest.length; i++) {
-        const m = modelsToTest[i];
-        out.textContent = `[魔法全库测活] 正在测试进度: ${i+1} / ${modelsToTest.length}\n正在校验模型: ${m} ...`;
-        try {
-            const r = await fetch("/v1/chat/completions", {
-                method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-                body: JSON.stringify({ model: m, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
-            });
-            const d = await r.json();
-            if (r.ok && d.choices && d.choices.length > 0) { working.add(m); } 
-            else { failed.add(m); }
-        } catch (err) { failed.add(m); }
+    async function worker() {
+        while (queue.length > 0) {
+            const m = queue.shift();
+            try {
+                const r = await fetch("/v1/chat/completions", {
+                    method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: m, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
+                });
+                const d = await r.json();
+                if (r.ok && d.choices && d.choices.length > 0) { working.add(m); } 
+                else { failed.add(m); }
+            } catch (err) { failed.add(m); }
+
+            completed++;
+            out.textContent = `[魔法全库并发测活] 当前进度: ${completed} / ${total}\n最后处理模型: ${m}\n(并发加速中，并发数: ${concurrency})`;
+        }
     }
+
+    const workers = [];
+    for (let i = 0; i < Math.min(concurrency, total); i++) {
+        workers.push(worker());
+    }
+    await Promise.all(workers);
 
     out.textContent = `[魔法全库测活] 测试完成！\n✅ 可用健康模型: ${working.size} 个\n❌ 剔除死链模型: ${failed.size} 个\n\n正在自动清理配置并保存云端...`;
 
@@ -666,10 +698,10 @@
     }
   });
 
-  // ====== 之前不小心被删掉的两个救命函数，已经补回！ ======
+  // ====== 基础转义工具 ======
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
   function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
-  // =========================================================
+  // ==========================
 
   $("connectBtn").addEventListener("click", connect);
   $("addBtn").addEventListener("click", () => {

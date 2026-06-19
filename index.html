@@ -149,6 +149,7 @@
   .tp-item .badge.alive { color: var(--accent); background: #34d39915; border: 1px solid #34d39930; }
   .tp-item .badge.temp { color: var(--warn); background: #fbbf2415; border: 1px solid #fbbf2440; }
   .tp-item .badge.gone { color: var(--danger-text); background: #fb71851a; border: 1px solid #fb718540; }
+  .tp-item .badge.auth { color: #06130d; background: var(--danger-text); border: 1px solid var(--danger-text); }
   .tp-item .m { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .tp-item .info { flex: none; color: var(--faint); font-size: 11px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tp-item .retry { flex: none; padding: 2px 8px; font-size: 11px; }
@@ -645,6 +646,8 @@
     let msg = "";
     if (d && d.error) msg = typeof d.error === "string" ? d.error : (d.error.message || "");
     msg = (msg || "").toLowerCase();
+    if (httpStatus === 401 || httpStatus === 403 || /unauthorized|invalid api key|incorrect api key|未授权|鉴权失败|令牌无效/.test(msg))
+      return "auth"; // 鉴权失败：PROXY_API_KEY 或上游 key 不对（不是模型问题）
     if (httpStatus === 404 || httpStatus === 410 ||
         /not found|does not exist|end of life|no such model|unknown model|invalid model|不支持|无此模型|已下线|模型不存在/.test(msg))
       return "gone";
@@ -680,8 +683,9 @@
     const queue = [...models];
     const total = models.length;
     let done = 0;
+    tpAborted = false;
     async function worker() {
-      while (queue.length > 0) {
+      while (queue.length > 0 && !tpAborted) {
         const m = queue.shift();
         let res = await probeModel(m, key, routePrefix);
         if (res.cls === "temp") res = await probeModel(m, key, routePrefix); // 重试一次
@@ -690,6 +694,7 @@
         tpUpdateProgress(done, total);
         tpRenderStat();
         tpRenderList();
+        if (res.cls === "auth") { tpAborted = true; queue.length = 0; } // 鉴权失败：停，避免无谓地全测一遍
       }
     }
     const ws = [];
@@ -701,8 +706,9 @@
   let tpResults = [];
   let tpContext = null;
   let tpFilter = "all";
+  let tpAborted = false;
   let tpBaseTitle = "测活结果";
-  const TP_BADGE = { alive: "可用", temp: "暂不可用", gone: "失效" };
+  const TP_BADGE = { alive: "可用", temp: "暂不可用", gone: "失效", auth: "鉴权失败" };
 
   function openTestPanel(title, context) {
     tpResults = []; tpContext = context; tpFilter = "all"; tpBaseTitle = title;
@@ -720,10 +726,13 @@
     $("tpBarFill").style.width = (total ? Math.round(done / total * 100) : 0) + "%";
     $("tpTitle").textContent = `${tpBaseTitle} (${done}/${total})`;
   }
-  function tpCounts() { const c = { alive: 0, temp: 0, gone: 0 }; tpResults.forEach((r) => c[r.cls]++); return c; }
+  function tpCounts() { const c = { alive: 0, temp: 0, gone: 0, auth: 0 }; tpResults.forEach((r) => c[r.cls]++); return c; }
   function tpRenderStat() {
     const c = tpCounts();
-    $("tpStat").innerHTML = `共 <b>${tpResults.length}</b> · <span class="alive">可用 ${c.alive}</span> · <span class="temp">暂不可用 ${c.temp}</span> · <span class="gone">失效 ${c.gone}</span>`;
+    let html = `共 <b>${tpResults.length}</b> · <span class="alive">可用 ${c.alive}</span> · <span class="temp">暂不可用 ${c.temp}</span> · <span class="gone">失效 ${c.gone}</span>`;
+    if (c.auth) html += ` · <span class="gone">鉴权失败 ${c.auth}</span>`;
+    if (tpAborted) html = `<span class="gone">❌ PROXY_API_KEY 不正确（收到 401）：请确认测试框里的密钥与后台 PROXY_API_KEY 完全一致、无空格。已中止测试。</span><br>` + html;
+    $("tpStat").innerHTML = html;
   }
   function tpRenderList() {
     const list = $("tpList");

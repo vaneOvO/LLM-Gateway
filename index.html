@@ -113,22 +113,23 @@
   /* 删除与自测过滤按钮 */
   .btn-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); background-color: transparent; border-radius: 8px; cursor: pointer; transition: all .15s ease; }
   .btn-icon svg { width: 16px; height: 16px; }
-  
   .btn-delete { color: var(--danger-text); border-color: var(--danger); }
   .btn-delete:hover { background-color: #fb71851a; border-color: var(--danger-text); transform: scale(1.02); }
   .btn-delete:active { transform: scale(0.96); }
-  
   .btn-magic { color: var(--warn); border-color: #fbbf2450; }
   .btn-magic:hover { background-color: #fbbf2415; border-color: var(--warn); transform: scale(1.02); }
   .btn-magic:active { transform: scale(0.96); }
+  select#concurrencySelect { cursor: pointer; padding-left: 12px; padding-right: 12px; text-align: center; }
 
-  /* 给下拉小框一点特别的样式调整 */
-  select#concurrencySelect {
-    cursor: pointer;
-    padding-left: 12px;
-    padding-right: 12px;
-    text-align: center;
-  }
+  /* 拖拽排序 */
+  .ep.dragging { opacity: .45; }
+  .ep.drop-before { box-shadow: inset 0 3px 0 0 var(--accent); }
+  .ep.drop-after { box-shadow: inset 0 -3px 0 0 var(--accent); }
+  .drag-handle { cursor: grab; color: var(--faint); flex: none; font-size: 13px; letter-spacing: -2px; padding: 0 2px; }
+  .drag-handle:active { cursor: grabbing; }
+  /* 未保存高亮 */
+  #saveBtn.dirty { background: var(--accent); color: #06130d; border-color: var(--accent); animation: savePulse 1.8s ease-in-out infinite; }
+  @keyframes savePulse { 0%,100% { box-shadow: 0 0 0 0 #34d39900; } 50% { box-shadow: 0 0 0 4px #34d39933; } }
 </style>
 </head>
 <body>
@@ -155,7 +156,7 @@
 
   <section class="card" id="cfgCard">
     <h2>上游站点</h2>
-    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个。给多家填上同一个模型即可自动负载均衡 + 故障转移。</div>
+    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个。给多家填上同一个模型即可自动负载均衡 + 故障转移。拖左侧手柄可排序。</div>
     <div class="toolbar">
       <button class="primary mini" id="addBtn">+ 新增站点</button>
       <button class="mini" id="saveBtn" disabled>保存配置</button>
@@ -181,7 +182,6 @@
   <section class="card">
     <h2>调用测试与清洗</h2>
     <div class="row" style="margin-bottom:12px;">
-      <!-- 将原本的一个 Proxy 输入框，分作两列：鉴权密钥 + 并发数 -->
       <div style="flex: 1; display: flex; gap: 10px;">
         <div style="flex: 1;">
           <label>PROXY_API_KEY（测试/清洗必备）</label>
@@ -205,13 +205,11 @@
             <button type="button" class="combo-clear" id="modelClear" title="清空">&times;</button>
             <div class="combo-menu" id="modelMenu"></div>
           </div>
-          <!-- 全局测活清理按钮 -->
           <button type="button" class="btn-icon btn-magic" id="globalTestBtn" title="全库自测：扫描下拉框并自动剔除不可用的死模型">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
             </svg>
           </button>
-          <!-- 删除选中按钮 -->
           <button type="button" class="btn-icon btn-delete" id="delModelBtn" title="一键从所有上游中彻底移除选中的模型">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -253,8 +251,10 @@
   let endpoints = [];
   let stats = {};
   let connected = false;
-  let uidSeq = 0;            
-  const openSet = new Set(); 
+  let uidSeq = 0;
+  const openSet = new Set();
+  let dragUid = null;        // 拖拽中的站点 uid
+  let dirty = false;         // 有未保存改动
 
   let toastTimer;
   function toast(msg, kind = "ok") {
@@ -263,12 +263,21 @@
   }
   function adminHeaders(extra) { return Object.assign({ "X-Admin-Token": $("adminToken").value.trim() }, extra || {}); }
 
+  function updateSaveBtn() {
+    const b = $("saveBtn");
+    const active = dirty && connected;
+    b.classList.toggle("dirty", active);
+    b.textContent = active ? "● 保存配置" : "保存配置";
+  }
+  function setDirty(v) { dirty = v; updateSaveBtn(); }
+
   function setConn(ok) {
     connected = ok;
     $("connDot").className = "dot" + (ok ? " live" : "");
     $("connText").textContent = ok ? "已连接" : "未连接";
     $("saveBtn").disabled = !ok;
     $("cfgCard").classList.toggle("locked", !ok);
+    updateSaveBtn();
   }
   setConn(false);
 
@@ -294,6 +303,18 @@
     return parts.join(" · ");
   }
 
+  function reorder(fromUid, targetUid, after) {
+    if (fromUid === targetUid) return;
+    const from = endpoints.findIndex((x) => x._uid === fromUid);
+    if (from < 0) return;
+    const item = endpoints.splice(from, 1)[0];
+    let t = endpoints.findIndex((x) => x._uid === targetUid);
+    if (t < 0) endpoints.push(item);
+    else endpoints.splice(after ? t + 1 : t, 0, item);
+    setDirty(true);
+    render();
+  }
+
   function render() {
     const list = $("epList");
     list.innerHTML = "";
@@ -309,7 +330,8 @@
       const el = document.createElement("div");
       el.className = "ep" + (open ? " open" : "");
       el.innerHTML = `
-        <div class="ep-row" data-row="${idx}">
+        <div class="ep-row" data-row="${idx}" draggable="true">
+          <span class="drag-handle" title="拖动排序">&#9776;</span>
           <span class="${statusDot(stats[ep.baseUrl])}"></span>
           <span class="nm ${ep.name ? "" : "unnamed"}">${escapeHtml(ep.name || "未命名")}</span>
           <span class="url">${escapeHtml(ep.baseUrl || "未填 Base URL")}</span>
@@ -346,11 +368,39 @@
           </div>
         </div>`;
       list.appendChild(el);
+
+      // 拖拽排序绑定（手柄/整行可拖；放到目标卡片上下半区决定插入位置）
+      const rowEl = el.querySelector(".ep-row");
+      rowEl.addEventListener("dragstart", (e) => {
+        dragUid = ep._uid; e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", String(ep._uid)); } catch (x) {}
+        el.classList.add("dragging");
+      });
+      rowEl.addEventListener("dragend", () => {
+        dragUid = null;
+        document.querySelectorAll(".ep").forEach((c) => c.classList.remove("dragging", "drop-before", "drop-after"));
+      });
+      el.addEventListener("dragover", (e) => {
+        if (dragUid == null || ep._uid === dragUid) return;
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        const after = (e.clientY - r.top) > r.height / 2;
+        el.classList.toggle("drop-after", after);
+        el.classList.toggle("drop-before", !after);
+      });
+      el.addEventListener("dragleave", () => { el.classList.remove("drop-before", "drop-after"); });
+      el.addEventListener("drop", (e) => {
+        if (dragUid == null) return;
+        e.preventDefault();
+        const after = el.classList.contains("drop-after");
+        el.classList.remove("drop-before", "drop-after");
+        reorder(dragUid, ep._uid, after);
+      });
     });
 
     list.querySelectorAll(".ep-row").forEach((row) => {
       row.addEventListener("click", (e) => {
-        if (e.target.closest(".del")) return;
+        if (e.target.closest(".del") || e.target.closest(".drag-handle")) return;
         const ep = endpoints[+row.dataset.row];
         const card = row.closest(".ep");
         if (openSet.has(ep._uid)) { openSet.delete(ep._uid); card.classList.remove("open"); }
@@ -367,6 +417,7 @@
         if (f === "name") { const nm = card.querySelector(".ep-row .nm"); nm.textContent = endpoints[i].name || "未命名"; nm.classList.toggle("unnamed", !endpoints[i].name); }
         if (f === "baseUrl") { card.querySelector(".ep-row .url").textContent = endpoints[i].baseUrl || "未填 Base URL"; card.querySelector(".ep-stats").innerHTML = statLine(endpoints[i].baseUrl); card.querySelector(".ep-row .meta").innerHTML = rowMeta(endpoints[i]); }
         if (f === "models") { card.querySelector(".ep-row .meta").innerHTML = rowMeta(endpoints[i]); buildModelCatalog(); }
+        setDirty(true);
       });
     });
 
@@ -375,9 +426,10 @@
       const i = +b.dataset.del;
       if (endpoints[i]) openSet.delete(endpoints[i]._uid);
       endpoints.splice(i, 1);
+      setDirty(true);
       render();
     }));
-    
+
     list.querySelectorAll("[data-ping]").forEach((b) => b.addEventListener("click", () => pingEndpoint(+b.dataset.ping)));
     list.querySelectorAll("[data-fetch]").forEach((b) => b.addEventListener("click", () => fetchModels(+b.dataset.fetch)));
     list.querySelectorAll("[data-selftest]").forEach((b) => b.addEventListener("click", () => selfTestEndpoint(+b.dataset.selftest)));
@@ -406,7 +458,7 @@
         if (!providers[mm].includes(upName)) providers[mm].push(upName);
       });
     });
-    modelCatalog = Object.keys(providers).sort().map((model) => ({ 
+    modelCatalog = Object.keys(providers).sort().map((model) => ({
       model, count: providers[model].length, upstreams: providers[model]
     }));
     syncClear();
@@ -419,12 +471,10 @@
     const menu = $("modelMenu");
     const q = (filter || "").toLowerCase();
     const items = modelCatalog.filter((x) => x.model.toLowerCase().includes(q));
-    
     if (!items.length) {
       menu.innerHTML = `<div class="combo-none">${modelCatalog.length ? "没有匹配的模型" : "先在上游站点里拉取/填写模型"}</div>`;
       return;
     }
-    
     menu.innerHTML = items
       .map((x) => `<div class="combo-item" data-m="${escapeAttr(x.model)}">
           <div style="display:flex; flex-direction:column; overflow:hidden;">
@@ -434,7 +484,6 @@
           ${x.count > 1 ? `<span class="combo-badge">×${x.count}</span>` : ""}
         </div>`)
       .join("");
-      
     menu.querySelectorAll(".combo-item").forEach((it) => {
       it.addEventListener("mousedown", (e) => {
         e.preventDefault();
@@ -444,7 +493,7 @@
       });
     });
   }
-  
+
   function openModelMenu() { renderModelMenu($("testModel").value.trim()); $("modelMenu").classList.add("open"); $("modelCombo").classList.add("open"); }
   function closeModelMenu() { $("modelMenu").classList.remove("open"); $("modelCombo").classList.remove("open"); }
 
@@ -466,7 +515,7 @@
       if (!r.ok) throw new Error(data.error || r.status);
       endpoints = (data.endpoints || []).map((e) => ({ name: e.name || "", baseUrl: e.baseUrl || "", apiKeys: e.apiKeys || [], models: e.models || [] }));
       await loadStats();
-      setConn(true); render();
+      setConn(true); setDirty(false); render();
       toast("已载入 " + endpoints.length + " 个站点", "ok");
     } catch (err) { setConn(false); toast("连接失败：" + err.message, "err"); }
   }
@@ -476,7 +525,12 @@
       const r = await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || r.status);
-      endpoints = data.endpoints || []; render(); toast("已保存配置", "ok");
+      // 保留本地 _uid / 展开 / 顺序；与服务端一致地丢掉空 baseUrl、规整尾斜杠
+      endpoints = endpoints.filter((e) => (e.baseUrl || "").trim());
+      endpoints.forEach((e) => { e.baseUrl = String(e.baseUrl || "").trim().replace(/\/+$/, ""); });
+      setDirty(false);
+      render();
+      toast("已保存配置", "ok");
     } catch (err) { toast("保存失败：" + err.message, "err"); }
   }
 
@@ -529,142 +583,109 @@
         res.textContent = d.status ? `✗ ${d.status}：没拿到模型列表` : `✗ ${d.error || "没拿到模型列表"}`;
         return;
       }
-      endpoints[idx].models = d.models;   
-      render();                            
+      endpoints[idx].models = d.models;
+      setDirty(true);
+      render();
       const res2 = document.querySelector(`[data-pingres="${idx}"]`);
       res2.className = "ping-res ok";
       res2.textContent = `✓ 拉到 ${d.models.length} 个模型 · 建议点 [筛选可用] 进行测活清洗`;
     } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
   }
 
-  // 局部并发自测：清洗某个站点的模型
   async function selfTestEndpoint(idx) {
     const ep = endpoints[idx];
     const key = $("proxyKey").value.trim();
     const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
     const res = document.querySelector(`[data-pingres="${idx}"]`);
-    
     if (!key) { res.className = "ping-res err"; res.textContent = "✗ 请先在最下方填写 PROXY_API_KEY"; return toast("自测依赖代理身份验证，请先填入 PROXY_API_KEY", "err"); }
     if (!ep.models || !ep.models.length) { res.className = "ping-res err"; res.textContent = "✗ 暂无模型可清洗"; return; }
-
     if (!confirm(`即将对该站点的 ${ep.models.length} 个模型进行并发测试。\n遇到不支持对话（如 tts / dall-e）或失效的模型将被自动剔除。\n\n当前设置并发数为：${concurrency}，确定继续吗？`)) return;
-
-    res.className = "ping-res wait"; 
-    
-    // 强制先保存以保证路由存在
+    res.className = "ping-res wait";
     await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) });
-
     const queue = [...ep.models];
     const total = queue.length;
     let completed = 0;
     const working = [];
     const failed = [];
-
-    // 定义并发工作者
     async function worker() {
       while (queue.length > 0) {
         const m = queue.shift();
         try {
-            // 如有特定路由，指定路由前缀避免负载到别家
-            const routeModel = ep.name ? `${ep.name}/${m}` : m;
-            const r = await fetch("/v1/chat/completions", {
-                method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-                body: JSON.stringify({ model: routeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
-            });
-            const d = await r.json();
-            if (r.ok && d.choices && d.choices.length > 0) { working.push(m); } 
-            else { failed.push(m); }
-        } catch(e) { failed.push(m); }
-        
+          const routeModel = ep.name ? `${ep.name}/${m}` : m;
+          const r = await fetch("/v1/chat/completions", {
+            method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: routeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
+          });
+          const d = await r.json();
+          if (r.ok && d.choices && d.choices.length > 0) { working.push(m); }
+          else { failed.push(m); }
+        } catch (e) { failed.push(m); }
         completed++;
         res.textContent = `并发自测中 (${completed}/${total}) 进度... [当前并发: ${concurrency}]`;
       }
     }
-
-    // 启动指定数量的并发 Worker 去消耗队列
     const workers = [];
-    for (let i = 0; i < Math.min(concurrency, total); i++) {
-        workers.push(worker());
-    }
+    for (let i = 0; i < Math.min(concurrency, total); i++) workers.push(worker());
     await Promise.all(workers);
-
     ep.models = working;
     render();
-    save(); // 测试完自动保存
+    save();
     const finalRes = document.querySelector(`[data-pingres="${idx}"]`);
     finalRes.className = "ping-res ok";
     finalRes.textContent = `✓ 测活完成！保留有效 ${working.length} 个，剔除无效 ${failed.length} 个 (已保存)。`;
   }
 
-  // 全局并发自测：遍历整个系统进行死模型清洗
   async function testAllModelsGlobally() {
     if (!connected) return toast("先连接控制台", "err");
     const key = $("proxyKey").value.trim();
     const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
-    
-    if (!key) {
-        $("proxyKey").focus();
-        return toast("全库自测依赖鉴权，请先在此框填入 PROXY_API_KEY", "err");
-    }
-    
+    if (!key) { $("proxyKey").focus(); return toast("全库自测依赖鉴权，请先在此框填入 PROXY_API_KEY", "err"); }
     buildModelCatalog();
-    const modelsToTest = modelCatalog.map(x => x.model);
+    const modelsToTest = modelCatalog.map((x) => x.model);
     if (!modelsToTest.length) return toast("下拉库当前是空的，暂无模型可测", "err");
-
-    if(!confirm(`魔法测活：系统将对这 ${modelsToTest.length} 个模型进行并发清洗。\n采用 ${concurrency} 线程并发机制，测试结束后将自动从所有站点中【永久剔除】不可用的死模型。\n\n确定开始吗？`)) return;
-
-    const out = $("testOut"); 
-    out.style.display = "block"; 
-
+    if (!confirm(`魔法测活：系统将对这 ${modelsToTest.length} 个模型进行并发清洗。\n采用 ${concurrency} 线程并发机制，测试结束后将自动从所有站点中【永久剔除】不可用的死模型。\n\n确定开始吗？`)) return;
+    const out = $("testOut"); out.style.display = "block";
     const queue = [...modelsToTest];
     const total = queue.length;
     let completed = 0;
     const working = new Set();
     const failed = new Set();
-
     async function worker() {
-        while (queue.length > 0) {
-            const m = queue.shift();
-            try {
-                const r = await fetch("/v1/chat/completions", {
-                    method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-                    body: JSON.stringify({ model: m, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
-                });
-                const d = await r.json();
-                if (r.ok && d.choices && d.choices.length > 0) { working.add(m); } 
-                else { failed.add(m); }
-            } catch (err) { failed.add(m); }
-
-            completed++;
-            out.textContent = `[魔法全库并发测活] 进度: ${completed} / ${total}\n[并发设置: ${concurrency}线程] 刚刚测试模型: ${m}`;
-        }
+      while (queue.length > 0) {
+        const m = queue.shift();
+        try {
+          const r = await fetch("/v1/chat/completions", {
+            method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: m, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
+          });
+          const d = await r.json();
+          if (r.ok && d.choices && d.choices.length > 0) { working.add(m); }
+          else { failed.add(m); }
+        } catch (err) { failed.add(m); }
+        completed++;
+        out.textContent = `[魔法全库并发测活] 进度: ${completed} / ${total}\n[并发设置: ${concurrency}线程] 刚刚测试模型: ${m}`;
+      }
     }
-
     const workers = [];
-    for (let i = 0; i < Math.min(concurrency, total); i++) {
-        workers.push(worker());
-    }
+    for (let i = 0; i < Math.min(concurrency, total); i++) workers.push(worker());
     await Promise.all(workers);
-
     out.textContent = `[魔法全库测活] 测试完成！\n✅ 可用健康模型: ${working.size} 个\n❌ 剔除死链模型: ${failed.size} 个\n\n正在自动清理配置并保存云端...`;
-
-    // 执行跨端清理逻辑
     if (failed.size > 0) {
-        let changed = false;
-        endpoints.forEach(ep => {
-            if (ep.models) {
-                const oldLen = ep.models.length;
-                ep.models = ep.models.filter(m => !failed.has(m));
-                if (ep.models.length !== oldLen) changed = true;
-            }
-        });
-        if (changed) {
-            render();
-            await save();
-            out.textContent += "\n✨ 清洗完毕！现在下拉框里展示的全部是可用模型！";
+      let changed = false;
+      endpoints.forEach((ep) => {
+        if (ep.models) {
+          const oldLen = ep.models.length;
+          ep.models = ep.models.filter((m) => !failed.has(m));
+          if (ep.models.length !== oldLen) changed = true;
         }
+      });
+      if (changed) {
+        render();
+        await save();
+        out.textContent += "\n✨ 清洗完毕！现在下拉框里展示的全部是可用模型！";
+      }
     } else {
-        out.textContent += "\n✨ 恭喜，所有模型均正常可用，无需清理。";
+      out.textContent += "\n✨ 恭喜，所有模型均正常可用，无需清理。";
     }
   }
 
@@ -688,58 +709,53 @@
     } catch (err) { out.textContent = "请求出错：" + err.message; }
   }
 
-  // 全局删除单一模型逻辑
   $("delModelBtn").addEventListener("click", () => {
     if (!connected) return toast("先连接控制台", "err");
     const modelToDelete = $("testModel").value.trim();
     if (!modelToDelete) return toast("请先下拉选择或输入要删除的模型", "err");
-    
     let found = false;
-    endpoints.forEach(ep => { if ((ep.models || []).includes(modelToDelete)) found = true; });
+    endpoints.forEach((ep) => { if ((ep.models || []).includes(modelToDelete)) found = true; });
     if (!found) return toast("当前所有站点的配置中均不存在该模型", "err");
-
     if (confirm(`危险操作：确定要从【所有上游】中彻底移除模型 "${modelToDelete}" 吗？\n（操作后将自动触发保存配置）`)) {
       let changed = false;
-      endpoints.forEach(ep => {
+      endpoints.forEach((ep) => {
         if (ep.models) {
           const oldLen = ep.models.length;
-          ep.models = ep.models.filter(m => m !== modelToDelete);
+          ep.models = ep.models.filter((m) => m !== modelToDelete);
           if (ep.models.length !== oldLen) changed = true;
         }
       });
       if (changed) {
         $("testModel").value = "";
         syncClear();
-        render(); 
-        save();   
+        render();
+        save();
         toast(`已删除模型: ${modelToDelete}`, "ok");
       }
     }
   });
 
-  // ====== 基础转义工具 ======
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
   function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
-  // ==========================
 
   $("connectBtn").addEventListener("click", connect);
   $("addBtn").addEventListener("click", () => {
     if (!connected) return toast("先连接控制台", "err");
     const ne = { name: "", baseUrl: "", apiKeys: [], models: [], _uid: ++uidSeq };
-    endpoints.unshift(ne); openSet.add(ne._uid); render();
+    endpoints.unshift(ne); openSet.add(ne._uid); setDirty(true); render();
   });
   $("saveBtn").addEventListener("click", save);
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);
-  
-  // 绑定全局一键测活
   $("globalTestBtn").addEventListener("click", testAllModelsGlobally);
 
   $("testModel").addEventListener("focus", openModelMenu);
   $("testModel").addEventListener("input", () => { syncClear(); openModelMenu(); });
   $("modelClear").addEventListener("click", () => { $("testModel").value = ""; syncClear(); $("testModel").focus(); openModelMenu(); });
   document.addEventListener("click", (e) => { if (!$("modelCombo").contains(e.target)) closeModelMenu(); });
+
+  window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
   refreshUsage();
   if (LS.a) connect();

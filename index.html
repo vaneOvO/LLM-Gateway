@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LLM Gateway · 路由控制台</title>
+<style>
+  :root {
+    --ink: #0c0f14; --panel: #12161d; --panel-2: #161b24;
+    --line: #232a35; --line-soft: #1b212b;
+    --text: #e6edf3; --muted: #8c97a6; --faint: #5d6675;
+    --accent: #34d399; --accent-dim: #1f6b52;
+    --danger: #f8717110; --danger-text: #fb7185; --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 80% -10%, #14361f22, transparent 60%), var(--ink);
+    color: var(--text); font-family: var(--sans); line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 28px 20px 80px; }
+  header.top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+  header.top h1 { font-size: 19px; font-weight: 650; letter-spacing: .2px; margin: 0; font-family: var(--mono); }
+  header.top h1 .slash { color: var(--accent); }
+  header.top .sub { color: var(--faint); font-size: 12.5px; font-family: var(--mono); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; }
+  .dot.live { background: var(--accent); box-shadow: 0 0 0 3px #34d39922; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-top: 18px; }
+  .card > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 5px; }
+  input, textarea, select {
+    width: 100%; background: var(--ink); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 11px; font-size: 13.5px; font-family: var(--mono); transition: border-color .12s;
+  }
+  textarea { resize: vertical; min-height: 64px; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px #34d39920; }
+  .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  button {
+    font-family: var(--sans); font-size: 13px; font-weight: 550; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+    transition: background .12s, border-color .12s, transform .04s;
+  }
+  button:hover { border-color: #33404f; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); color: #06130d; border-color: var(--accent); }
+  button.primary:hover { background: #41e0a6; }
+  button.ghost { background: transparent; }
+  button.mini { padding: 5px 10px; font-size: 12px; font-family: var(--mono); }
+  button.link { background: none; border: none; color: var(--danger-text); padding: 6px 8px; }
+  button.link:hover { background: var(--danger); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .ep { border: 1px solid var(--line-soft); border-radius: 10px; margin-bottom: 10px; background: var(--panel-2); border-left: 3px solid var(--accent-dim); overflow: hidden; }
+  .ep-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; user-select: none; }
+  .ep-row:hover { background: #1a212b; }
+  .ep-row .nm { font-family: var(--mono); font-weight: 600; color: var(--accent); flex: none; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ep-row .nm.unnamed { color: var(--faint); font-weight: 500; }
+  .ep-row .url { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 60px; }
+  .ep-row .meta { font-family: var(--mono); font-size: 11.5px; color: var(--faint); flex: none; white-space: nowrap; }
+  .ep-row .meta .ok { color: var(--accent); } .ep-row .meta .err { color: var(--danger-text); }
+  .ep-row .chev { color: var(--faint); transition: transform .15s; flex: none; font-size: 11px; }
+  .ep.open .ep-row .chev { transform: rotate(90deg); }
+  .ep-row .del { color: var(--danger-text); background: none; border: none; padding: 4px 8px; font-size: 12px; flex: none; }
+  .ep-row .del:hover { background: var(--danger); border-radius: 6px; }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+  .sdot.ok { background: var(--accent); } .sdot.err { background: var(--danger-text); }
+  .ep-body { display: none; padding: 0 14px 14px; border-top: 1px solid var(--line-soft); }
+  .ep.open .ep-body { display: block; }
+  .ep-body .field:first-child { margin-top: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+  .field { margin-bottom: 12px; } .field:last-child { margin-bottom: 0; }
+  .hint { color: var(--faint); font-size: 11.5px; margin-top: 4px; font-family: var(--mono); }
+  .ep-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+  .ep-stats { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .ep-stats b { color: var(--text); font-weight: 600; }
+  .ep-stats .ok { color: var(--accent); } .ep-stats .err { color: var(--danger-text); }
+  .ping-res { font-family: var(--mono); font-size: 11.5px; }
+  .ping-res.ok { color: var(--accent); } .ping-res.err { color: var(--danger-text); } .ping-res.wait { color: var(--warn); }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .spacer { flex: 1; }
+  pre { background: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; }
+  pre .k { color: var(--accent); }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 11px 18px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 50; font-family: var(--mono); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.ok { border-color: var(--accent-dim); } .toast.err { border-color: #5c2530; color: var(--danger-text); }
+  .empty { color: var(--faint); font-size: 13px; text-align: center; padding: 26px 0; font-family: var(--mono); }
+  .locked { opacity: .4; pointer-events: none; }
+
+  /* 自定义下拉框样式 */
+  .combo { position: relative; flex: 1; min-width: 0; }
+  .combo > input { padding-right: 34px; transition: border-color .15s, box-shadow .15s; cursor: text; }
+  .combo > input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #34d39920; }
+  .combo-arrow { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--muted); pointer-events: none; transition: transform 0.2s; }
+  .combo-clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; padding: 0; line-height: 1; font-size: 16px; border: none; background: transparent; color: var(--faint); border-radius: 6px; display: none; cursor: pointer; transition: color .15s; }
+  .combo-clear:hover { background: var(--line); color: var(--text); }
+  .combo.has-val .combo-clear { display: block; }
+  .combo.has-val .combo-arrow { display: none; }
+  .combo.open .combo-arrow { transform: translateY(-50%) rotate(180deg); }
+  .combo-menu { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px; max-height: 280px; overflow-y: auto; box-shadow: 0 12px 30px #00000080; visibility: hidden; opacity: 0; transform: translateY(-4px); transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s; }
+  .combo-menu.open { visibility: visible; opacity: 1; transform: translateY(0); }
+  .combo-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--text); transition: background 0.1s; }
+  .combo-item:hover, .combo-item.active { background: var(--line); }
+  .combo-item .nm { font-family: var(--mono); font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .combo-item .upstreams { font-size: 11px; color: var(--faint); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .combo-badge { flex: none; font-size: 11px; color: var(--accent); background: #34d39915; border: 1px solid #34d39930; border-radius: 999px; padding: 1px 8px; font-weight: 600; }
+  .combo-none { padding: 16px 10px; color: var(--faint); font-size: 12.5px; font-family: var(--mono); text-align: center; }
+
+  /* 删除与自测过滤按钮 */
+  .btn-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); background-color: transparent; border-radius: 8px; cursor: pointer; transition: all .15s ease; }
+  .btn-icon svg { width: 16px; height: 16px; }
+  .btn-delete { color: var(--danger-text); border-color: var(--danger); }
+  .btn-delete:hover { background-color: #fb71851a; border-color: var(--danger-text); transform: scale(1.02); }
+  .btn-delete:active { transform: scale(0.96); }
+  .btn-magic { color: var(--warn); border-color: #fbbf2450; }
+  .btn-magic:hover { background-color: #fbbf2415; border-color: var(--warn); transform: scale(1.02); }
+  .btn-magic:active { transform: scale(0.96); }
+  select#concurrencySelect { cursor: pointer; padding-left: 12px; padding-right: 12px; text-align: center; }
+
+  /* 拖拽排序 */
+  .ep.dragging { opacity: .45; }
+  .ep.drop-before { box-shadow: inset 0 3px 0 0 var(--accent); }
+  .ep.drop-after { box-shadow: inset 0 -3px 0 0 var(--accent); }
+  .drag-handle { cursor: grab; color: var(--faint); flex: none; font-size: 13px; letter-spacing: -2px; padding: 0 2px; }
+  .drag-handle:active { cursor: grabbing; }
+  /* 未保存高亮 */
+  #saveBtn.dirty { background: var(--accent); color: #06130d; border-color: var(--accent); animation: savePulse 1.8s ease-in-out infinite; }
+  @keyframes savePulse { 0%,100% { box-shadow: 0 0 0 0 #34d39900; } 50% { box-shadow: 0 0 0 4px #34d39933; } }
+
+  /* 测活结果面板 */
+  .testpanel { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); overflow: hidden; }
+  .tp-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 13px; }
+  .tp-head .ttl { font-weight: 600; }
+  .tp-bar { height: 4px; background: var(--ink); }
+  .tp-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .tp-stat { padding: 8px 14px; font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .tp-stat .alive { color: var(--accent); } .tp-stat .temp { color: var(--warn); } .tp-stat .gone { color: var(--danger-text); }
+  .tp-filters { display: flex; gap: 6px; padding: 0 14px 8px; flex-wrap: wrap; }
+  .tp-filters button { padding: 3px 10px; font-size: 11.5px; font-family: var(--mono); background: var(--ink); }
+  .tp-filters button.active { background: var(--accent); color: #06130d; border-color: var(--accent); }
+  .tp-list { max-height: 340px; overflow-y: auto; padding: 0 8px 8px; }
+  .tp-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 7px; font-family: var(--mono); font-size: 12px; }
+  .tp-item:hover { background: var(--ink); }
+  .tp-item .badge { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px; }
+  .tp-item .badge.alive { color: var(--accent); background: #34d39915; border: 1px solid #34d39930; }
+  .tp-item .badge.temp { color: var(--warn); background: #fbbf2415; border: 1px solid #fbbf2440; }
+  .tp-item .badge.gone { color: var(--danger-text); background: #fb71851a; border: 1px solid #fb718540; }
+  .tp-item .badge.auth { color: #06130d; background: var(--danger-text); border: 1px solid var(--danger-text); }
+  .tp-item .m { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .tp-item .info { flex: none; color: var(--faint); font-size: 11px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tp-item .retry { flex: none; padding: 2px 8px; font-size: 11px; }
+  .tp-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); flex-wrap: wrap; }
+  .tp-actions .danger { color: var(--danger-text); border-color: var(--danger); }
+  .tp-actions .danger:hover { background: #fb71851a; }
+
+  /* 模型同步设置 */
+  .toggle { position: relative; width: 44px; height: 24px; border-radius: 999px; background: var(--line); border: 1px solid var(--line); padding: 0; cursor: pointer; flex: none; transition: background .15s; }
+  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--faint); transition: transform .15s, background .15s; }
+  .toggle.on { background: var(--accent); border-color: var(--accent); }
+  .toggle.on::after { transform: translateX(20px); background: #06130d; }
+  .sync-toggle { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; font-size: 13px; }
+  .grid-sync { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 560px) { .grid-sync { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>llm<span class="slash">/</span>gateway</h1>
+    <span class="sub" id="originLabel"></span>
+    <span class="spacer"></span>
+    <span class="sub"><span class="dot" id="connDot"></span> <span id="connText">未连接</span></span>
+  </header>
+
+  <section class="card">
+    <h2>连接控制台</h2>
+    <div class="row">
+      <div>
+        <label>管理员令牌（ADMIN_TOKEN）</label>
+        <input id="adminToken" type="password" placeholder="输入后台环境变量里设的 ADMIN_TOKEN" />
+      </div>
+      <button class="primary" id="connectBtn">连接并载入</button>
+    </div>
+    <div class="hint">令牌只用于读写配置，保存在本浏览器，不会出现在地址栏或日志里。</div>
+  </section>
+
+  <section class="card" id="cfgCard">
+    <h2>上游站点</h2>
+    <div class="hint" style="margin-bottom:12px;">调用时 <b>model 直接写模型名</b>（如 <b>gemini-3.5-flash</b>），网关会在所有「列出了该模型」的上游里按延迟加权挑一个、失败自动切下一个。给多家填上同一个模型即可自动负载均衡 + 故障转移。拖左侧手柄可排序。</div>
+    <div class="toolbar">
+      <button class="primary mini" id="addBtn">+ 新增站点</button>
+      <button class="mini" id="saveBtn" disabled>保存配置</button>
+      <span class="spacer"></span>
+      <button class="mini ghost" id="refreshStatsBtn">刷新统计</button>
+      <button class="mini ghost" id="resetStatsBtn">清零统计</button>
+    </div>
+    <div id="epList"></div>
+    <div class="field" style="margin-top:14px;">
+      <label>模型降级 / 兜底（每行一个，按顺序尝试；请求的模型整组上游都不可用时自动改用，避免断流。留空=不降级）</label>
+      <textarea id="fallbackBox" placeholder="例如：&#10;gpt-oss-20b&#10;llama3.1-8b"></textarea>
+    </div>
+  </section>
+
+  <section class="card" id="syncCard">
+    <h2>模型列表同步</h2>
+    <div class="hint" style="margin-bottom:14px;">自动把所有站点的模型列表从上游拉取同步，与上游保持一致。注意：自动同步只在本控制台页面打开时运行（浏览器定时器）；要 24 小时后台同步需另配 Cloudflare Cron Worker。</div>
+    <div class="sync-toggle">
+      <button id="syncToggle" class="toggle" role="switch" aria-checked="false" title="启用自动同步"></button>
+      <span><b>启用自动同步</b> · 按设定间隔自动执行</span>
+    </div>
+    <div class="grid-sync">
+      <div class="field"><label>执行间隔（小时）</label><input id="syncInterval" type="number" min="1" max="720" value="6" /></div>
+      <div class="field"><label>并发数量（建议 1–3）</label><input id="syncConcurrency" type="number" min="1" max="10" value="2" /></div>
+      <div class="field"><label>最大重试次数</label><input id="syncRetries" type="number" min="0" max="10" value="2" /></div>
+      <div class="field"><label>每分钟请求数（建议 10–30）</label><input id="syncRpm" type="number" min="1" max="600" value="20" /></div>
+      <div class="field"><label>突发请求上限（令牌桶容量）</label><input id="syncBurst" type="number" min="1" max="100" value="5" /></div>
+    </div>
+    <div class="bar">
+      <button class="primary mini" id="syncNowBtn">立即同步全部</button>
+      <button class="mini ghost" id="syncResetBtn">重置</button>
+      <span class="spacer"></span>
+      <span class="hint" id="syncStatus">—</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>对外 OpenAI 兼容接口</h2>
+    <div class="field">
+      <label>Base URL（给别的工具 / OpenAI SDK 用）</label>
+      <pre id="baseUrlBox">—</pre>
+    </div>
+    <div class="field">
+      <label>调用示例（鉴权用 PROXY_API_KEY，model 直接写模型名）</label>
+      <pre id="curlBox">—</pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>调用测试与清洗</h2>
+    <div class="row" style="margin-bottom:12px;">
+      <div style="flex: 1; display: flex; gap: 10px;">
+        <div style="flex: 1;">
+          <label>PROXY_API_KEY（测试/清洗必备）</label>
+          <input id="proxyKey" type="password" placeholder="后台设的 PROXY_API_KEY" />
+        </div>
+        <div style="width: 80px; flex: none;">
+          <label>测活并发</label>
+          <select id="concurrencySelect" title="同时发送测试请求的数量，按质量调整">
+            <option value="6">6</option>
+            <option value="12" selected>12</option>
+            <option value="32">32</option>
+          </select>
+        </div>
+      </div>
+      <div style="flex: 1.5;">
+        <label>下拉仅展示可用模型（支持自由填入 站点/模型名）</label>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="combo" id="modelCombo">
+            <input id="testModel" autocomplete="off" placeholder="gemini-3.5-flash" />
+            <svg class="combo-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+            <button type="button" class="combo-clear" id="modelClear" title="清空">&times;</button>
+            <div class="combo-menu" id="modelMenu"></div>
+          </div>
+          <button type="button" class="btn-icon btn-magic" id="globalTestBtn" title="全库自测：扫描下拉框并自动剔除不可用的死模型">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+            </svg>
+          </button>
+          <button type="button" class="btn-icon btn-delete" id="delModelBtn" title="一键从所有上游中彻底移除选中的模型">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="field">
+      <label>消息</label>
+      <textarea id="testMsg" placeholder="hello">hello</textarea>
+    </div>
+    <div class="bar">
+      <button class="primary" id="testBtn">发送 / 测试选中模型</button>
+      <span class="spacer"></span>
+    </div>
+    <pre id="testOut" style="display:none;"></pre>
+
+    <div class="testpanel" id="testPanel" style="display:none;">
+      <div class="tp-head">
+        <span class="ttl" id="tpTitle">测活结果</span>
+        <span class="spacer"></span>
+        <button class="mini ghost" id="tpExport">导出</button>
+        <button class="mini ghost" id="tpClose">关闭</button>
+      </div>
+      <div class="tp-bar"><div class="tp-bar-fill" id="tpBarFill"></div></div>
+      <div class="tp-stat" id="tpStat"></div>
+      <div class="tp-filters" id="tpFilters">
+        <button data-flt="all" class="active">全部</button>
+        <button data-flt="alive">✅ 可用</button>
+        <button data-flt="temp">⏳ 暂不可用</button>
+        <button data-flt="gone">❌ 失效</button>
+      </div>
+      <div class="tp-list" id="tpList"></div>
+      <div class="tp-actions" id="tpActions" style="display:none;">
+        <button class="mini" id="tpSetFallback" style="display:none; background:var(--accent); color:#06130d; border-color:var(--accent);">设为兜底池</button>
+        <button class="mini danger" id="tpDeleteGone">删除失效模型</button>
+        <button class="mini ghost" id="tpRetryTemp">重测「暂不可用」</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const origin = location.origin;
+  const $ = (id) => document.getElementById(id);
+  $("originLabel").textContent = origin;
+
+  const LS = {
+    get a() { return localStorage.getItem("llmgw_admin") || ""; },
+    set a(v) { localStorage.setItem("llmgw_admin", v); },
+    get p() { return localStorage.getItem("llmgw_proxy") || ""; },
+    set p(v) { localStorage.setItem("llmgw_proxy", v); },
+  };
+  $("adminToken").value = LS.a;
+  $("proxyKey").value = LS.p;
+
+  let endpoints = [];
+  let stats = {};
+  let connected = false;
+  let uidSeq = 0;
+  const openSet = new Set();
+  let dragUid = null;        // 拖拽中的站点 uid
+  let dirty = false;         // 有未保存改动
+
+  let toastTimer;
+  function toast(msg, kind = "ok") {
+    const t = $("toast"); t.textContent = msg; t.className = "toast show " + kind;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = "toast " + kind), 2600);
+  }
+  function adminHeaders(extra) { return Object.assign({ "X-Admin-Token": $("adminToken").value.trim() }, extra || {}); }
+
+  function updateSaveBtn() {
+    const b = $("saveBtn");
+    const active = dirty && connected;
+    b.classList.toggle("dirty", active);
+    b.textContent = active ? "● 保存配置" : "保存配置";
+  }
+  function setDirty(v) { dirty = v; updateSaveBtn(); }
+
+  function setConn(ok) {
+    connected = ok;
+    $("connDot").className = "dot" + (ok ? " live" : "");
+    $("connText").textContent = ok ? "已连接" : "未连接";
+    $("saveBtn").disabled = !ok;
+    $("cfgCard").classList.toggle("locked", !ok);
+    updateSaveBtn();
+  }
+  setConn(false);
+
+  function statLine(baseUrl) {
+    const s = stats[baseUrl];
+    if (!s || !s.total) return "尚无调用";
+    const last = s.lastUsed ? new Date(s.lastUsed).toLocaleString() : "—";
+    const lat = (typeof s.latMs === "number") ? ` · <b>~${s.latMs}ms</b>` : "";
+    return `调用 <b>${s.total}</b> · <span class="ok">ok ${s.ok}</span> · <span class="err">err ${s.err}</span>${lat} · 最近 ${last}`;
+  }
+
+  function statusDot(s) {
+    if (!s || !s.total) return "sdot";
+    if (s.ok > 0) return "sdot ok";
+    if (s.err > 0) return "sdot err";
+    return "sdot";
+  }
+  function rowMeta(ep) {
+    const s = stats[ep.baseUrl] || {};
+    const parts = [`×${(ep.models || []).length} 模型`];
+    if (typeof s.latMs === "number") parts.push(`~${s.latMs}ms`);
+    if (s.total) parts.push(`<span class="ok">ok ${s.ok}</span>/<span class="err">err ${s.err}</span>`);
+    return parts.join(" · ");
+  }
+
+  function reorder(fromUid, targetUid, after) {
+    if (fromUid === targetUid) return;
+    const from = endpoints.findIndex((x) => x._uid === fromUid);
+    if (from < 0) return;
+    const item = endpoints.splice(from, 1)[0];
+    let t = endpoints.findIndex((x) => x._uid === targetUid);
+    if (t < 0) endpoints.push(item);
+    else endpoints.splice(after ? t + 1 : t, 0, item);
+    setDirty(true);
+    render();
+  }
+
+  function render() {
+    const list = $("epList");
+    list.innerHTML = "";
+    if (!endpoints.length) {
+      list.innerHTML = '<div class="empty">还没有站点。点上方「+ 新增站点」开始。</div>';
+      refreshUsage();
+      return;
+    }
+
+    endpoints.forEach((ep, idx) => {
+      if (ep._uid == null) ep._uid = ++uidSeq;
+      const open = openSet.has(ep._uid);
+      const el = document.createElement("div");
+      el.className = "ep" + (open ? " open" : "");
+      el.innerHTML = `
+        <div class="ep-row" data-row="${idx}" draggable="true">
+          <span class="drag-handle" title="拖动排序">&#9776;</span>
+          <span class="${statusDot(stats[ep.baseUrl])}"></span>
+          <span class="nm ${ep.name ? "" : "unnamed"}">${escapeHtml(ep.name || "未命名")}</span>
+          <span class="url">${escapeHtml(ep.baseUrl || "未填 Base URL")}</span>
+          <span class="meta">${rowMeta(ep)}</span>
+          <button class="del" data-del="${idx}">删除</button>
+          <span class="chev">&#9654;</span>
+        </div>
+        <div class="ep-body">
+          <div class="grid2">
+            <div class="field">
+              <label>站点名（可留空；仅作标签，不影响按模型名的选路）</label>
+              <input data-f="name" data-i="${idx}" value="${escapeAttr(ep.name)}" placeholder="freeapi" />
+            </div>
+            <div class="field">
+              <label>Base URL（OpenAI 兼容根，填到 /v1，别带 /models）</label>
+              <input data-f="baseUrl" data-i="${idx}" value="${escapeAttr(ep.baseUrl)}" placeholder="https://xxx/v1" />
+            </div>
+          </div>
+          <div class="field">
+            <label>API Keys（每行一个，多个会随机轮换）</label>
+            <textarea data-f="apiKeys" data-i="${idx}" placeholder="sk-...">${escapeHtml((ep.apiKeys || []).join("\n"))}</textarea>
+          </div>
+          <div class="field">
+            <label>模型（每行一个，可留空=通配；拉取后可点底部的【筛选可用】测活）</label>
+            <textarea data-f="models" data-i="${idx}" placeholder="gpt-4o">${escapeHtml((ep.models || []).join("\n"))}</textarea>
+          </div>
+          <div class="ep-foot">
+            <button class="mini ghost" data-ping="${idx}">测试连通</button>
+            <button class="mini ghost" data-fetch="${idx}">拉取模型</button>
+            <button class="mini ghost" style="color:var(--warn); border-color:rgba(251,191,36,0.3);" data-selftest="${idx}">筛选可用</button>
+            <span class="ping-res" data-pingres="${idx}"></span>
+            <span class="spacer"></span>
+            <span class="ep-stats" data-stat="${idx}">${statLine(ep.baseUrl)}</span>
+          </div>
+        </div>`;
+      list.appendChild(el);
+
+      // 拖拽排序绑定（手柄/整行可拖；放到目标卡片上下半区决定插入位置）
+      const rowEl = el.querySelector(".ep-row");
+      rowEl.addEventListener("dragstart", (e) => {
+        dragUid = ep._uid; e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", String(ep._uid)); } catch (x) {}
+        el.classList.add("dragging");
+      });
+      rowEl.addEventListener("dragend", () => {
+        dragUid = null;
+        document.querySelectorAll(".ep").forEach((c) => c.classList.remove("dragging", "drop-before", "drop-after"));
+      });
+      el.addEventListener("dragover", (e) => {
+        if (dragUid == null || ep._uid === dragUid) return;
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        const after = (e.clientY - r.top) > r.height / 2;
+        el.classList.toggle("drop-after", after);
+        el.classList.toggle("drop-before", !after);
+      });
+      el.addEventListener("dragleave", () => { el.classList.remove("drop-before", "drop-after"); });
+      el.addEventListener("drop", (e) => {
+        if (dragUid == null) return;
+        e.preventDefault();
+        const after = el.classList.contains("drop-after");
+        el.classList.remove("drop-before", "drop-after");
+        reorder(dragUid, ep._uid, after);
+      });
+    });
+
+    list.querySelectorAll(".ep-row").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".del") || e.target.closest(".drag-handle")) return;
+        const ep = endpoints[+row.dataset.row];
+        const card = row.closest(".ep");
+        if (openSet.has(ep._uid)) { openSet.delete(ep._uid); card.classList.remove("open"); }
+        else { openSet.add(ep._uid); card.classList.add("open"); }
+      });
+    });
+
+    list.querySelectorAll("[data-f]").forEach((node) => {
+      node.addEventListener("input", (e) => {
+        const i = +e.target.dataset.i, f = e.target.dataset.f;
+        if (f === "apiKeys" || f === "models") endpoints[i][f] = e.target.value.split("\n").map((s) => s.trim()).filter(Boolean);
+        else endpoints[i][f] = e.target.value;
+        const card = e.target.closest(".ep");
+        if (f === "name") { const nm = card.querySelector(".ep-row .nm"); nm.textContent = endpoints[i].name || "未命名"; nm.classList.toggle("unnamed", !endpoints[i].name); }
+        if (f === "baseUrl") { card.querySelector(".ep-row .url").textContent = endpoints[i].baseUrl || "未填 Base URL"; card.querySelector(".ep-stats").innerHTML = statLine(endpoints[i].baseUrl); card.querySelector(".ep-row .meta").innerHTML = rowMeta(endpoints[i]); }
+        if (f === "models") { card.querySelector(".ep-row .meta").innerHTML = rowMeta(endpoints[i]); buildModelCatalog(); }
+        setDirty(true);
+      });
+    });
+
+    list.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const i = +b.dataset.del;
+      if (endpoints[i]) openSet.delete(endpoints[i]._uid);
+      endpoints.splice(i, 1);
+      setDirty(true);
+      render();
+    }));
+
+    list.querySelectorAll("[data-ping]").forEach((b) => b.addEventListener("click", () => pingEndpoint(+b.dataset.ping)));
+    list.querySelectorAll("[data-fetch]").forEach((b) => b.addEventListener("click", () => fetchModels(+b.dataset.fetch)));
+    list.querySelectorAll("[data-selftest]").forEach((b) => b.addEventListener("click", () => selfTestEndpoint(+b.dataset.selftest)));
+    refreshUsage();
+  }
+
+  function refreshUsage() {
+    $("baseUrlBox").innerHTML = `${escapeHtml(origin)}/v1`;
+    let m = "gemini-3.5-flash";
+    for (const ep of endpoints) { if (ep.models && ep.models[0]) { m = ep.models[0]; break; } }
+    $("curlBox").innerHTML =
+`curl -X POST ${escapeHtml(origin)}/v1/chat/completions \\
+  -H "Authorization: Bearer <span class="k">$PROXY_API_KEY</span>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"${escapeHtml(m)}","messages":[{"role":"user","content":"hello"}]}'`;
+    buildModelCatalog();
+  }
+
+  let modelCatalog = [];
+  function buildModelCatalog() {
+    const providers = {};
+    endpoints.forEach((ep) => {
+      const upName = ep.name || "未命名";
+      (ep.models || []).forEach((mm) => {
+        if (!providers[mm]) providers[mm] = [];
+        if (!providers[mm].includes(upName)) providers[mm].push(upName);
+      });
+    });
+    modelCatalog = Object.keys(providers).sort().map((model) => ({
+      model, count: providers[model].length, upstreams: providers[model]
+    }));
+    syncClear();
+    renderModelMenu($("testModel").value.trim());
+  }
+
+  function syncClear() { $("modelCombo").classList.toggle("has-val", !!$("testModel").value.trim()); }
+
+  function renderModelMenu(filter) {
+    const menu = $("modelMenu");
+    const q = (filter || "").toLowerCase();
+    const items = modelCatalog.filter((x) => x.model.toLowerCase().includes(q));
+    if (!items.length) {
+      menu.innerHTML = `<div class="combo-none">${modelCatalog.length ? "没有匹配的模型" : "先在上游站点里拉取/填写模型"}</div>`;
+      return;
+    }
+    menu.innerHTML = items
+      .map((x) => `<div class="combo-item" data-m="${escapeAttr(x.model)}">
+          <div style="display:flex; flex-direction:column; overflow:hidden;">
+            <span class="nm">${escapeHtml(x.model)}</span>
+            ${x.upstreams && x.upstreams.length > 0 ? `<span class="upstreams">由 ${escapeHtml(x.upstreams.join(', '))} 提供</span>` : ""}
+          </div>
+          ${x.count > 1 ? `<span class="combo-badge">×${x.count}</span>` : ""}
+        </div>`)
+      .join("");
+    menu.querySelectorAll(".combo-item").forEach((it) => {
+      it.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        $("testModel").value = it.dataset.m;
+        syncClear();
+        closeModelMenu();
+      });
+    });
+  }
+
+  function openModelMenu() { renderModelMenu($("testModel").value.trim()); $("modelMenu").classList.add("open"); $("modelCombo").classList.add("open"); }
+  function closeModelMenu() { $("modelMenu").classList.remove("open"); $("modelCombo").classList.remove("open"); }
+
+  async function loadStats() {
+    try {
+      const r = await fetch("/admin/stats", { headers: adminHeaders() });
+      const data = await r.json();
+      if (r.ok) stats = data.stats || {};
+    } catch {}
+  }
+
+  // 当前配置体：所有 PUT 都用它，避免漏带 fallbackModels / syncSettings 把配置覆盖没了
+  function configBody() {
+    const fallbackModels = $("fallbackBox").value.split("\n").map((s) => s.trim()).filter(Boolean);
+    return JSON.stringify({ endpoints, fallbackModels, syncSettings: readSyncSettings() });
+  }
+
+  // ===== 模型列表同步 =====
+  const SYNC_DEFAULTS = { enabled: false, intervalHours: 6, concurrency: 2, maxRetries: 2, rpm: 20, burst: 5 };
+  let syncEnabled = false;
+  let syncTimer = null;
+
+  function num(el, def) { const n = Number($(el).value); return Number.isFinite(n) ? n : def; }
+  function readSyncSettings() {
+    return {
+      enabled: syncEnabled,
+      intervalHours: num("syncInterval", 6),
+      concurrency: num("syncConcurrency", 2),
+      maxRetries: num("syncRetries", 2),
+      rpm: num("syncRpm", 20),
+      burst: num("syncBurst", 5),
+    };
+  }
+  function updateSyncToggleUI() {
+    const b = $("syncToggle");
+    b.classList.toggle("on", syncEnabled);
+    b.setAttribute("aria-checked", syncEnabled ? "true" : "false");
+  }
+  function applySyncSettings(s) {
+    s = Object.assign({}, SYNC_DEFAULTS, s || {});
+    syncEnabled = !!s.enabled;
+    $("syncInterval").value = s.intervalHours;
+    $("syncConcurrency").value = s.concurrency;
+    $("syncRetries").value = s.maxRetries;
+    $("syncRpm").value = s.rpm;
+    $("syncBurst").value = s.burst;
+    updateSyncToggleUI();
+  }
+  function resetSyncSettings() { applySyncSettings(SYNC_DEFAULTS); setDirty(true); applyScheduler(); }
+
+  // 重新从服务端载入配置（同步会在服务端改写模型，需要刷新面板显示）
+  async function reloadConfig() {
+    const r = await fetch("/admin/config", { headers: adminHeaders() });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.status);
+    endpoints = (data.endpoints || []).map((e) => ({ name: e.name || "", baseUrl: e.baseUrl || "", apiKeys: e.apiKeys || [], models: e.models || [] }));
+    $("fallbackBox").value = (data.fallbackModels || []).join("\n");
+    applySyncSettings(data.syncSettings);
+    setDirty(false);
+    render();
+    buildModelCatalog();
+  }
+
+  // 同步交给服务端 /admin/sync 执行（关页面也能被 Cron Worker 触发）。
+  //   auto=false：手动「立即同步全部」→ 强制同步；auto=true：定时 ping，服务端按间隔判断是否真跑。
+  async function runServerSync(auto) {
+    if (!connected) return toast("先连接控制台", "err");
+    if (!auto && dirty) { await save(); } // 手动同步前先把本地改动存上，避免被服务端结果覆盖丢失
+    $("syncStatus").textContent = auto ? "自动同步检查中…" : "服务端同步中…";
+    try {
+      const r = await fetch("/admin/sync" + (auto ? "?auto=1" : ""), { method: "POST", headers: adminHeaders() });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      if (d.skipped) {
+        $("syncStatus").textContent = d.skipped === "disabled" ? "自动同步未启用" : `未到间隔（约 ${d.nextInMin || "?"} 分钟后再同步）`;
+        return;
+      }
+      await reloadConfig().catch(() => {});
+      $("syncStatus").textContent = `✓ ${new Date().toLocaleString()} · 成功 ${d.synced} · 失败 ${d.failed}（共 ${d.total}）`;
+    } catch (e) { $("syncStatus").textContent = "✗ " + (e.message || e); }
+  }
+
+  function applyScheduler() {
+    if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+    const s = readSyncSettings();
+    if (s.enabled && connected) {
+      // 页面开着时也定时 ping 服务端（服务端按间隔去重，不会重复跑）；真正的 24h 后台靠独立 Cron Worker
+      syncTimer = setInterval(() => { runServerSync(true); }, Math.max(1, s.intervalHours) * 3600 * 1000);
+    }
+  }
+
+  async function connect() {
+    const token = $("adminToken").value.trim();
+    if (!token) return toast("先填管理员令牌", "err");
+    LS.a = token;
+    try {
+      const r = await fetch("/admin/config", { headers: adminHeaders() });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      endpoints = (data.endpoints || []).map((e) => ({ name: e.name || "", baseUrl: e.baseUrl || "", apiKeys: e.apiKeys || [], models: e.models || [] }));
+      $("fallbackBox").value = (data.fallbackModels || []).join("\n");
+      applySyncSettings(data.syncSettings);
+      await loadStats();
+      setConn(true); setDirty(false); render();
+      applyScheduler();
+      toast("已载入 " + endpoints.length + " 个站点", "ok");
+    } catch (err) { setConn(false); toast("连接失败：" + err.message, "err"); }
+  }
+
+  async function save() {
+    try {
+      const r = await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: configBody() });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      // 保留本地 _uid / 展开 / 顺序；与服务端一致地丢掉空 baseUrl、规整尾斜杠
+      endpoints = endpoints.filter((e) => (e.baseUrl || "").trim());
+      endpoints.forEach((e) => { e.baseUrl = String(e.baseUrl || "").trim().replace(/\/+$/, ""); });
+      setDirty(false);
+      render();
+      toast("已保存配置", "ok");
+    } catch (err) { toast("保存失败：" + err.message, "err"); }
+  }
+
+  async function refreshStats() {
+    if (!connected) return toast("先连接控制台", "err");
+    await loadStats();
+    document.querySelectorAll("[data-stat]").forEach((el, i) => { el.innerHTML = statLine(endpoints[i] && endpoints[i].baseUrl); });
+    toast("统计已刷新", "ok");
+  }
+
+  async function resetStats() {
+    if (!connected) return toast("先连接控制台", "err");
+    if (!confirm("确定清零所有站点的请求计数？")) return;
+    try {
+      const r = await fetch("/admin/stats", { method: "DELETE", headers: adminHeaders() });
+      if (!r.ok) throw new Error((await r.json()).error || r.status);
+      stats = {}; render(); toast("计数已清零", "ok");
+    } catch (err) { toast("清零失败：" + err.message, "err"); }
+  }
+
+  async function pingEndpoint(idx) {
+    const ep = endpoints[idx];
+    const res = document.querySelector(`[data-pingres="${idx}"]`);
+    if (!ep.baseUrl) { res.className = "ping-res err"; res.textContent = "✗ 先填 Base URL"; return; }
+    res.className = "ping-res wait"; res.textContent = "测试中…";
+    try {
+      const r = await fetch("/admin/ping", {
+        method: "POST", headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ baseUrl: ep.baseUrl, apiKey: (ep.apiKeys || [])[0] || "" }),
+      });
+      const d = await r.json();
+      if (d.ok) { res.className = "ping-res ok"; res.textContent = `✓ ${d.status} · ${d.ms}ms`; }
+      else { res.className = "ping-res err"; res.textContent = d.status ? `✗ ${d.status} · ${d.ms}ms` : `✗ ${d.error || "失败"}`; }
+    } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
+  }
+
+  async function fetchModels(idx) {
+    const ep = endpoints[idx];
+    const res = document.querySelector(`[data-pingres="${idx}"]`);
+    if (!ep.baseUrl) { res.className = "ping-res err"; res.textContent = "✗ 先填 Base URL"; return; }
+    res.className = "ping-res wait"; res.textContent = "拉取模型中…";
+    try {
+      const r = await fetch("/admin/upstream-models", {
+        method: "POST", headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ baseUrl: ep.baseUrl, apiKey: (ep.apiKeys || [])[0] || "" }),
+      });
+      const d = await r.json();
+      if (!d.models || !d.models.length) {
+        res.className = "ping-res err";
+        res.textContent = d.status ? `✗ ${d.status}：没拿到模型列表` : `✗ ${d.error || "没拿到模型列表"}`;
+        return;
+      }
+      endpoints[idx].models = d.models;
+      setDirty(true);
+      render();
+      const res2 = document.querySelector(`[data-pingres="${idx}"]`);
+      res2.className = "ping-res ok";
+      res2.textContent = `✓ 拉到 ${d.models.length} 个模型 · 建议点 [筛选可用] 进行测活清洗`;
+    } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
+  }
+
+  // 判定单次测活结果：
+  //   auth(只有网关自身 PROXY_API_KEY 不对，会中止整轮) / gone(永久失效→删) / temp(临时，保留)
+  function classifyResult(httpStatus, d) {
+    if (httpStatus < 400 && d && !d.error) return "alive";
+    const errStr = d && d.error ? (typeof d.error === "string" ? d.error : (d.error.message || "")) : "";
+    const msg = (errStr || "").toLowerCase();
+    // 网关自身拒绝：body 恰好是 {"error":"Unauthorized"} → PROXY_API_KEY 不对，才中止
+    if (httpStatus === 401 && d && d.error === "Unauthorized") return "auth";
+    // 永久失效：模型不存在/已下线（注意：别把"余额/额度/限流"误判成永久）
+    if (httpStatus === 404 || httpStatus === 410 ||
+        /not found|does not exist|end of life|no such model|unknown model|invalid model|model_not_found|不支持.*模型|无此模型|已下线|模型不存在/.test(msg))
+      return "gone";
+    // 其余：上游 401(余额/额度不足)、403、429 限流、5xx、超时… → 临时，保留并继续测
+    return "temp";
+  }
+
+  // ===== 测活引擎 =====
+  const TEST_TIMEOUT = 30000; // 单次请求超时(ms)
+  async function probeModel(model, key, routePrefix) {
+    const routeModel = routePrefix ? `${routePrefix}/${model}` : model;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), TEST_TIMEOUT);
+    const start = Date.now();
+    try {
+      const r = await fetch("/v1/chat/completions", {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: routeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 16, stream: false }),
+      });
+      clearTimeout(t);
+      const d = await r.json().catch(() => null);
+      const cls = classifyResult(r.status, d);
+      let reason = "";
+      if (cls !== "alive") reason = (d && d.error) ? (typeof d.error === "string" ? d.error : (d.error.message || JSON.stringify(d.error))) : ("HTTP " + r.status);
+      return { model, cls, http: r.status, ms: Date.now() - start, up: r.headers.get("X-Upstream"), reason: (reason || "").slice(0, 160) };
+    } catch (e) {
+      clearTimeout(t);
+      return { model, cls: "temp", http: 0, ms: Date.now() - start, up: null, reason: e.name === "AbortError" ? "超时(30s)" : String(e).slice(0, 160) };
+    }
+  }
+  // 并发跑一批；temp 自动重试 1 次(以重试结果为准)；结果写入 tpResults 并实时刷新面板
+  async function runTestEngine(models, key, routePrefix, concurrency) {
+    const queue = [...models];
+    const total = models.length;
+    let done = 0;
+    tpAborted = false;
+    async function worker() {
+      while (queue.length > 0 && !tpAborted) {
+        const m = queue.shift();
+        let res = await probeModel(m, key, routePrefix);
+        if (res.cls === "temp") res = await probeModel(m, key, routePrefix); // 重试一次
+        tpResults.push(res);
+        done++;
+        tpUpdateProgress(done, total);
+        tpRenderStat();
+        tpRenderList();
+        if (res.cls === "auth") { tpAborted = true; queue.length = 0; } // 鉴权失败：停，避免无谓地全测一遍
+      }
+    }
+    const ws = [];
+    for (let i = 0; i < Math.min(concurrency, total); i++) ws.push(worker());
+    await Promise.all(ws);
+  }
+
+  // ===== 结果面板 =====
+  let tpResults = [];
+  let tpContext = null;
+  let tpFilter = "all";
+  let tpAborted = false;
+  let tpBaseTitle = "测活结果";
+  const TP_BADGE = { alive: "可用", temp: "暂不可用", gone: "失效", auth: "鉴权失败" };
+
+  function openTestPanel(title, context) {
+    tpResults = []; tpContext = context; tpFilter = "all"; tpBaseTitle = title;
+    $("testOut").style.display = "none";
+    $("testPanel").style.display = "block";
+    $("tpTitle").textContent = title;
+    $("tpActions").style.display = "none";
+    $("tpDeleteGone").disabled = false; $("tpRetryTemp").disabled = false;
+    $("tpBarFill").style.width = "0%";
+    $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === "all"));
+    tpRenderStat(); tpRenderList();
+    $("testPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  function tpUpdateProgress(done, total) {
+    $("tpBarFill").style.width = (total ? Math.round(done / total * 100) : 0) + "%";
+    $("tpTitle").textContent = `${tpBaseTitle} (${done}/${total})`;
+  }
+  function tpCounts() { const c = { alive: 0, temp: 0, gone: 0, auth: 0 }; tpResults.forEach((r) => c[r.cls]++); return c; }
+  function tpRenderStat() {
+    const c = tpCounts();
+    let html = `共 <b>${tpResults.length}</b> · <span class="alive">可用 ${c.alive}</span> · <span class="temp">暂不可用 ${c.temp}</span> · <span class="gone">失效 ${c.gone}</span>`;
+    if (c.auth) html += ` · <span class="gone">鉴权失败 ${c.auth}</span>`;
+    if (tpAborted) html = `<span class="gone">❌ PROXY_API_KEY 不正确（收到 401）：请确认测试框里的密钥与后台 PROXY_API_KEY 完全一致、无空格。已中止测试。</span><br>` + html;
+    $("tpStat").innerHTML = html;
+  }
+  function tpRenderList() {
+    const list = $("tpList");
+    const items = tpResults.filter((r) => tpFilter === "all" || r.cls === tpFilter);
+    if (!items.length) { list.innerHTML = `<div class="combo-none">${tpResults.length ? "该分类下没有模型" : "测试中…"}</div>`; return; }
+    list.innerHTML = items.map((r) => {
+      const info = r.cls === "alive"
+        ? `${r.up ? ("→ " + r.up.replace(/^https?:\/\//, "")) : ""} · ${r.ms}ms`
+        : (r.reason || ("HTTP " + r.http));
+      return `<div class="tp-item">
+        <span class="badge ${r.cls}">${TP_BADGE[r.cls]}</span>
+        <span class="m" title="${escapeAttr(r.model)}">${escapeHtml(r.model)}</span>
+        <span class="info" title="${escapeAttr(r.reason || info)}">${escapeHtml(info)}</span>
+        <button class="mini ghost retry" data-rt="${escapeAttr(r.model)}">重测</button>
+      </div>`;
+    }).join("");
+    list.querySelectorAll("[data-rt]").forEach((b) => b.addEventListener("click", () => tpRetryOne(b.dataset.rt)));
+  }
+  function tpSetFilter(f) {
+    tpFilter = f;
+    $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === f));
+    tpRenderList();
+  }
+  function tpFinish() {
+    const c = tpCounts();
+    $("tpActions").style.display = "flex";
+    $("tpDeleteGone").textContent = `删除失效模型（${c.gone}）`;
+    $("tpDeleteGone").disabled = c.gone === 0;
+    $("tpRetryTemp").textContent = `重测「暂不可用」（${c.temp}）`;
+    $("tpRetryTemp").disabled = c.temp === 0;
+    const sf = $("tpSetFallback");
+    sf.style.display = c.alive > 0 ? "inline-block" : "none";  // 任意模式下，把可用模型设为兜底池
+    sf.textContent = `设为兜底池（可用 ${c.alive}）`;
+    $("tpTitle").textContent = `${tpBaseTitle} · 完成`;
+  }
+  // 把本次测活「可用」的模型(按延迟从快到慢)写入兜底池并保存 —— 之后任何模型挂了都会自动降级到这批
+  async function tpSetAsFallback() {
+    const alive = tpResults.filter((r) => r.cls === "alive").sort((a, b) => (a.ms || 0) - (b.ms || 0)).map((r) => r.model);
+    if (!alive.length) return toast("没有可用模型可设", "err");
+    $("fallbackBox").value = alive.join("\n");
+    setDirty(true);
+    await save();
+    toast(`已把 ${alive.length} 个可用模型设为兜底池`, "ok");
+  }
+  function tpRoutePrefix() {
+    return (tpContext && tpContext.mode === "self" && endpoints[tpContext.idx]) ? (endpoints[tpContext.idx].name || "") : "";
+  }
+  async function tpRetryOne(model) {
+    const key = $("proxyKey").value.trim(); if (!key) return toast("先填 PROXY_API_KEY", "err");
+    const res = await probeModel(model, key, tpRoutePrefix());
+    const i = tpResults.findIndex((r) => r.model === model);
+    if (i >= 0) tpResults[i] = res; else tpResults.push(res);
+    tpRenderStat(); tpRenderList(); tpFinish();
+  }
+  async function tpRetryTempModels() {
+    const key = $("proxyKey").value.trim(); if (!key) return toast("先填 PROXY_API_KEY", "err");
+    const temps = tpResults.filter((r) => r.cls === "temp").map((r) => r.model);
+    if (!temps.length) return;
+    const prefix = tpRoutePrefix();
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    const queue = [...temps]; const total = temps.length; let done = 0;
+    async function w() {
+      while (queue.length > 0) {
+        const m = queue.shift();
+        const res = await probeModel(m, key, prefix);
+        const i = tpResults.findIndex((r) => r.model === m); if (i >= 0) tpResults[i] = res;
+        done++; tpUpdateProgress(done, total); tpRenderStat(); tpRenderList();
+      }
+    }
+    const ws = []; for (let i = 0; i < Math.min(concurrency, total); i++) ws.push(w());
+    await Promise.all(ws);
+    tpFinish();
+  }
+  async function applyDeleteGone() {
+    const goneSet = new Set(tpResults.filter((r) => r.cls === "gone").map((r) => r.model));
+    if (!goneSet.size) return;
+    if (tpContext && tpContext.mode === "self") {
+      const ep = endpoints[tpContext.idx];
+      if (ep && ep.models) ep.models = ep.models.filter((m) => !goneSet.has(m));
+    } else {
+      endpoints.forEach((ep) => { if (ep.models) ep.models = ep.models.filter((m) => !goneSet.has(m)); });
+    }
+    render(); await save();
+    toast(`已删除 ${goneSet.size} 个失效模型`, "ok");
+    $("tpDeleteGone").disabled = true; $("tpDeleteGone").textContent = "失效模型已删除";
+  }
+  function tpExportResults() {
+    if (!tpResults.length) return toast("还没有结果可导出", "err");
+    const head = "status\tmodel\tupstream\tlatency_ms\treason";
+    const lines = tpResults.map((r) => `${r.cls}\t${r.model}\t${r.up || ""}\t${r.ms}\t${(r.reason || "").replace(/\s+/g, " ")}`);
+    const text = head + "\n" + lines.join("\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast("已复制到剪贴板", "ok")).catch(() => {});
+    try {
+      const blob = new Blob([text], { type: "text/tab-separated-values" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `测活结果_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.tsv`;
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (e) {}
+  }
+
+  async function selfTestEndpoint(idx) {
+    const ep = endpoints[idx];
+    const key = $("proxyKey").value.trim();
+    const res = document.querySelector(`[data-pingres="${idx}"]`);
+    if (!key) { if (res) { res.className = "ping-res err"; res.textContent = "✗ 先填 PROXY_API_KEY"; } return toast("先填 PROXY_API_KEY", "err"); }
+    if (!ep.models || !ep.models.length) { if (res) { res.className = "ping-res err"; res.textContent = "✗ 该站点暂无模型可测"; } return; }
+    if (res) { res.className = "ping-res wait"; res.textContent = "测活中…见下方结果面板"; }
+    // 先存一份，保证分组路由存在
+    await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: configBody() }).catch(() => {});
+    openTestPanel(`筛选可用 · ${ep.name || ep.baseUrl}`, { mode: "self", idx });
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    await runTestEngine(ep.models, key, ep.name || "", concurrency);
+    tpFinish();
+    if (res) { res.className = "ping-res ok"; res.textContent = "✓ 测活完成，见结果面板"; }
+  }
+
+  async function testAllModelsGlobally() {
+    if (!connected) return toast("先连接控制台", "err");
+    const key = $("proxyKey").value.trim();
+    if (!key) { $("proxyKey").focus(); return toast("先填 PROXY_API_KEY", "err"); }
+    buildModelCatalog();
+    const models = modelCatalog.map((x) => x.model);
+    if (!models.length) return toast("下拉库为空，暂无模型可测", "err");
+    openTestPanel(`魔法全库测活 · ${models.length} 个模型`, { mode: "global" });
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    await runTestEngine(models, key, "", concurrency);
+    tpFinish();
+  }
+
+  async function test() {
+    const key = $("proxyKey").value.trim();
+    const model = $("testModel").value.trim();
+    const msg = $("testMsg").value;
+    if (!key) return toast("填 PROXY_API_KEY", "err");
+    if (!model) return toast("填模型名", "err");
+    LS.p = key;
+    const out = $("testOut"); out.style.display = "block"; out.textContent = "请求中…";
+    try {
+      const r = await fetch("/v1/chat/completions", {
+        method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: msg }], stream: false }),
+      });
+      const data = await r.json();
+      if (!r.ok) { out.textContent = "HTTP " + r.status + "\n" + JSON.stringify(data, null, 2); return; }
+      const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      out.textContent = content != null ? content : JSON.stringify(data, null, 2);
+    } catch (err) { out.textContent = "请求出错：" + err.message; }
+  }
+
+  $("delModelBtn").addEventListener("click", () => {
+    if (!connected) return toast("先连接控制台", "err");
+    const modelToDelete = $("testModel").value.trim();
+    if (!modelToDelete) return toast("请先下拉选择或输入要删除的模型", "err");
+    let found = false;
+    endpoints.forEach((ep) => { if ((ep.models || []).includes(modelToDelete)) found = true; });
+    if (!found) return toast("当前所有站点的配置中均不存在该模型", "err");
+    if (confirm(`危险操作：确定要从【所有上游】中彻底移除模型 "${modelToDelete}" 吗？\n（操作后将自动触发保存配置）`)) {
+      let changed = false;
+      endpoints.forEach((ep) => {
+        if (ep.models) {
+          const oldLen = ep.models.length;
+          ep.models = ep.models.filter((m) => m !== modelToDelete);
+          if (ep.models.length !== oldLen) changed = true;
+        }
+      });
+      if (changed) {
+        $("testModel").value = "";
+        syncClear();
+        render();
+        save();
+        toast(`已删除模型: ${modelToDelete}`, "ok");
+      }
+    }
+  });
+
+  function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+  function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+  $("connectBtn").addEventListener("click", connect);
+  $("fallbackBox").addEventListener("input", () => setDirty(true));
+  $("syncToggle").addEventListener("click", () => { syncEnabled = !syncEnabled; updateSyncToggleUI(); setDirty(true); applyScheduler(); });
+  $("syncNowBtn").addEventListener("click", () => runServerSync(false));
+  $("syncResetBtn").addEventListener("click", resetSyncSettings);
+  ["syncInterval", "syncConcurrency", "syncRetries", "syncRpm", "syncBurst"].forEach((id) =>
+    $(id).addEventListener("input", () => { setDirty(true); applyScheduler(); }));
+  $("addBtn").addEventListener("click", () => {
+    if (!connected) return toast("先连接控制台", "err");
+    const ne = { name: "", baseUrl: "", apiKeys: [], models: [], _uid: ++uidSeq };
+    endpoints.unshift(ne); openSet.add(ne._uid); setDirty(true); render();
+  });
+  $("saveBtn").addEventListener("click", save);
+  $("refreshStatsBtn").addEventListener("click", refreshStats);
+  $("resetStatsBtn").addEventListener("click", resetStats);
+  $("testBtn").addEventListener("click", test);
+  $("globalTestBtn").addEventListener("click", testAllModelsGlobally);
+
+  // 测活结果面板
+  $("tpClose").addEventListener("click", () => { $("testPanel").style.display = "none"; });
+  $("tpExport").addEventListener("click", tpExportResults);
+  $("tpDeleteGone").addEventListener("click", applyDeleteGone);
+  $("tpRetryTemp").addEventListener("click", tpRetryTempModels);
+  $("tpSetFallback").addEventListener("click", tpSetAsFallback);
+  $("tpFilters").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => tpSetFilter(b.dataset.flt)));
+
+  $("testModel").addEventListener("focus", openModelMenu);
+  $("testModel").addEventListener("input", () => { syncClear(); openModelMenu(); });
+  $("modelClear").addEventListener("click", () => { $("testModel").value = ""; syncClear(); $("testModel").focus(); openModelMenu(); });
+  document.addEventListener("click", (e) => { if (!$("modelCombo").contains(e.target)) closeModelMenu(); });
+
+  window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+  refreshUsage();
+  if (LS.a) connect();
+})();
+</script>
+</body>
+</html>

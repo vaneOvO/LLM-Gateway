@@ -652,18 +652,20 @@
     } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
   }
 
-  // 判定单次测活结果：alive(可用) / gone(永久失效→删) / temp(临时故障→保留)
+  // 判定单次测活结果：
+  //   auth(只有网关自身 PROXY_API_KEY 不对，会中止整轮) / gone(永久失效→删) / temp(临时，保留)
   function classifyResult(httpStatus, d) {
     if (httpStatus < 400 && d && !d.error) return "alive";
-    let msg = "";
-    if (d && d.error) msg = typeof d.error === "string" ? d.error : (d.error.message || "");
-    msg = (msg || "").toLowerCase();
-    if (httpStatus === 401 || httpStatus === 403 || /unauthorized|invalid api key|incorrect api key|未授权|鉴权失败|令牌无效/.test(msg))
-      return "auth"; // 鉴权失败：PROXY_API_KEY 或上游 key 不对（不是模型问题）
+    const errStr = d && d.error ? (typeof d.error === "string" ? d.error : (d.error.message || "")) : "";
+    const msg = (errStr || "").toLowerCase();
+    // 网关自身拒绝：body 恰好是 {"error":"Unauthorized"} → PROXY_API_KEY 不对，才中止
+    if (httpStatus === 401 && d && d.error === "Unauthorized") return "auth";
+    // 永久失效：模型不存在/已下线（注意：别把"余额/额度/限流"误判成永久）
     if (httpStatus === 404 || httpStatus === 410 ||
-        /not found|does not exist|end of life|no such model|unknown model|invalid model|不支持|无此模型|已下线|模型不存在/.test(msg))
+        /not found|does not exist|end of life|no such model|unknown model|invalid model|model_not_found|不支持.*模型|无此模型|已下线|模型不存在/.test(msg))
       return "gone";
-    return "temp"; // 5xx / 429 / 限流 / 超时 / 网络错误 → 临时，保留
+    // 其余：上游 401(余额/额度不足)、403、429 限流、5xx、超时… → 临时，保留并继续测
+    return "temp";
   }
 
   // ===== 测活引擎 =====

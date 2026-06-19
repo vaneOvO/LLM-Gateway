@@ -130,6 +130,31 @@
   /* 未保存高亮 */
   #saveBtn.dirty { background: var(--accent); color: #06130d; border-color: var(--accent); animation: savePulse 1.8s ease-in-out infinite; }
   @keyframes savePulse { 0%,100% { box-shadow: 0 0 0 0 #34d39900; } 50% { box-shadow: 0 0 0 4px #34d39933; } }
+
+  /* 测活结果面板 */
+  .testpanel { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); overflow: hidden; }
+  .tp-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 13px; }
+  .tp-head .ttl { font-weight: 600; }
+  .tp-bar { height: 4px; background: var(--ink); }
+  .tp-bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .tp-stat { padding: 8px 14px; font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+  .tp-stat .alive { color: var(--accent); } .tp-stat .temp { color: var(--warn); } .tp-stat .gone { color: var(--danger-text); }
+  .tp-filters { display: flex; gap: 6px; padding: 0 14px 8px; flex-wrap: wrap; }
+  .tp-filters button { padding: 3px 10px; font-size: 11.5px; font-family: var(--mono); background: var(--ink); }
+  .tp-filters button.active { background: var(--accent); color: #06130d; border-color: var(--accent); }
+  .tp-list { max-height: 340px; overflow-y: auto; padding: 0 8px 8px; }
+  .tp-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 7px; font-family: var(--mono); font-size: 12px; }
+  .tp-item:hover { background: var(--ink); }
+  .tp-item .badge { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px; }
+  .tp-item .badge.alive { color: var(--accent); background: #34d39915; border: 1px solid #34d39930; }
+  .tp-item .badge.temp { color: var(--warn); background: #fbbf2415; border: 1px solid #fbbf2440; }
+  .tp-item .badge.gone { color: var(--danger-text); background: #fb71851a; border: 1px solid #fb718540; }
+  .tp-item .m { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .tp-item .info { flex: none; color: var(--faint); font-size: 11px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tp-item .retry { flex: none; padding: 2px 8px; font-size: 11px; }
+  .tp-actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line-soft); flex-wrap: wrap; }
+  .tp-actions .danger { color: var(--danger-text); border-color: var(--danger); }
+  .tp-actions .danger:hover { background: #fb71851a; }
 </style>
 </head>
 <body>
@@ -227,6 +252,28 @@
       <span class="spacer"></span>
     </div>
     <pre id="testOut" style="display:none;"></pre>
+
+    <div class="testpanel" id="testPanel" style="display:none;">
+      <div class="tp-head">
+        <span class="ttl" id="tpTitle">测活结果</span>
+        <span class="spacer"></span>
+        <button class="mini ghost" id="tpExport">导出</button>
+        <button class="mini ghost" id="tpClose">关闭</button>
+      </div>
+      <div class="tp-bar"><div class="tp-bar-fill" id="tpBarFill"></div></div>
+      <div class="tp-stat" id="tpStat"></div>
+      <div class="tp-filters" id="tpFilters">
+        <button data-flt="all" class="active">全部</button>
+        <button data-flt="alive">✅ 可用</button>
+        <button data-flt="temp">⏳ 暂不可用</button>
+        <button data-flt="gone">❌ 失效</button>
+      </div>
+      <div class="tp-list" id="tpList"></div>
+      <div class="tp-actions" id="tpActions" style="display:none;">
+        <button class="mini danger" id="tpDeleteGone">删除失效模型</button>
+        <button class="mini ghost" id="tpRetryTemp">重测「暂不可用」</button>
+      </div>
+    </div>
   </section>
 
 </div>
@@ -592,101 +639,206 @@
     } catch (err) { res.className = "ping-res err"; res.textContent = "✗ " + err.message; }
   }
 
-  async function selfTestEndpoint(idx) {
-    const ep = endpoints[idx];
-    const key = $("proxyKey").value.trim();
-    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
-    const res = document.querySelector(`[data-pingres="${idx}"]`);
-    if (!key) { res.className = "ping-res err"; res.textContent = "✗ 请先在最下方填写 PROXY_API_KEY"; return toast("自测依赖代理身份验证，请先填入 PROXY_API_KEY", "err"); }
-    if (!ep.models || !ep.models.length) { res.className = "ping-res err"; res.textContent = "✗ 暂无模型可清洗"; return; }
-    if (!confirm(`即将对该站点的 ${ep.models.length} 个模型进行并发测试。\n遇到不支持对话（如 tts / dall-e）或失效的模型将被自动剔除。\n\n当前设置并发数为：${concurrency}，确定继续吗？`)) return;
-    res.className = "ping-res wait";
-    await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) });
-    const queue = [...ep.models];
-    const total = queue.length;
-    let completed = 0;
-    const working = [];
-    const failed = [];
+  // 判定单次测活结果：alive(可用) / gone(永久失效→删) / temp(临时故障→保留)
+  function classifyResult(httpStatus, d) {
+    if (httpStatus < 400 && d && !d.error) return "alive";
+    let msg = "";
+    if (d && d.error) msg = typeof d.error === "string" ? d.error : (d.error.message || "");
+    msg = (msg || "").toLowerCase();
+    if (httpStatus === 404 || httpStatus === 410 ||
+        /not found|does not exist|end of life|no such model|unknown model|invalid model|不支持|无此模型|已下线|模型不存在/.test(msg))
+      return "gone";
+    return "temp"; // 5xx / 429 / 限流 / 超时 / 网络错误 → 临时，保留
+  }
+
+  // ===== 测活引擎 =====
+  const TEST_TIMEOUT = 30000; // 单次请求超时(ms)
+  async function probeModel(model, key, routePrefix) {
+    const routeModel = routePrefix ? `${routePrefix}/${model}` : model;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), TEST_TIMEOUT);
+    const start = Date.now();
+    try {
+      const r = await fetch("/v1/chat/completions", {
+        method: "POST", signal: ctrl.signal,
+        headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: routeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 16, stream: false }),
+      });
+      clearTimeout(t);
+      const d = await r.json().catch(() => null);
+      const cls = classifyResult(r.status, d);
+      let reason = "";
+      if (cls !== "alive") reason = (d && d.error) ? (typeof d.error === "string" ? d.error : (d.error.message || JSON.stringify(d.error))) : ("HTTP " + r.status);
+      return { model, cls, http: r.status, ms: Date.now() - start, up: r.headers.get("X-Upstream"), reason: (reason || "").slice(0, 160) };
+    } catch (e) {
+      clearTimeout(t);
+      return { model, cls: "temp", http: 0, ms: Date.now() - start, up: null, reason: e.name === "AbortError" ? "超时(30s)" : String(e).slice(0, 160) };
+    }
+  }
+  // 并发跑一批；temp 自动重试 1 次(以重试结果为准)；结果写入 tpResults 并实时刷新面板
+  async function runTestEngine(models, key, routePrefix, concurrency) {
+    const queue = [...models];
+    const total = models.length;
+    let done = 0;
     async function worker() {
       while (queue.length > 0) {
         const m = queue.shift();
-        try {
-          const routeModel = ep.name ? `${ep.name}/${m}` : m;
-          const r = await fetch("/v1/chat/completions", {
-            method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: routeModel, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
-          });
-          const d = await r.json();
-          if (r.ok && d.choices && d.choices.length > 0) { working.push(m); }
-          else { failed.push(m); }
-        } catch (e) { failed.push(m); }
-        completed++;
-        res.textContent = `并发自测中 (${completed}/${total}) 进度... [当前并发: ${concurrency}]`;
+        let res = await probeModel(m, key, routePrefix);
+        if (res.cls === "temp") res = await probeModel(m, key, routePrefix); // 重试一次
+        tpResults.push(res);
+        done++;
+        tpUpdateProgress(done, total);
+        tpRenderStat();
+        tpRenderList();
       }
     }
-    const workers = [];
-    for (let i = 0; i < Math.min(concurrency, total); i++) workers.push(worker());
-    await Promise.all(workers);
-    ep.models = working;
-    render();
-    save();
-    const finalRes = document.querySelector(`[data-pingres="${idx}"]`);
-    finalRes.className = "ping-res ok";
-    finalRes.textContent = `✓ 测活完成！保留有效 ${working.length} 个，剔除无效 ${failed.length} 个 (已保存)。`;
+    const ws = [];
+    for (let i = 0; i < Math.min(concurrency, total); i++) ws.push(worker());
+    await Promise.all(ws);
+  }
+
+  // ===== 结果面板 =====
+  let tpResults = [];
+  let tpContext = null;
+  let tpFilter = "all";
+  let tpBaseTitle = "测活结果";
+  const TP_BADGE = { alive: "可用", temp: "暂不可用", gone: "失效" };
+
+  function openTestPanel(title, context) {
+    tpResults = []; tpContext = context; tpFilter = "all"; tpBaseTitle = title;
+    $("testOut").style.display = "none";
+    $("testPanel").style.display = "block";
+    $("tpTitle").textContent = title;
+    $("tpActions").style.display = "none";
+    $("tpDeleteGone").disabled = false; $("tpRetryTemp").disabled = false;
+    $("tpBarFill").style.width = "0%";
+    $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === "all"));
+    tpRenderStat(); tpRenderList();
+    $("testPanel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  function tpUpdateProgress(done, total) {
+    $("tpBarFill").style.width = (total ? Math.round(done / total * 100) : 0) + "%";
+    $("tpTitle").textContent = `${tpBaseTitle} (${done}/${total})`;
+  }
+  function tpCounts() { const c = { alive: 0, temp: 0, gone: 0 }; tpResults.forEach((r) => c[r.cls]++); return c; }
+  function tpRenderStat() {
+    const c = tpCounts();
+    $("tpStat").innerHTML = `共 <b>${tpResults.length}</b> · <span class="alive">可用 ${c.alive}</span> · <span class="temp">暂不可用 ${c.temp}</span> · <span class="gone">失效 ${c.gone}</span>`;
+  }
+  function tpRenderList() {
+    const list = $("tpList");
+    const items = tpResults.filter((r) => tpFilter === "all" || r.cls === tpFilter);
+    if (!items.length) { list.innerHTML = `<div class="combo-none">${tpResults.length ? "该分类下没有模型" : "测试中…"}</div>`; return; }
+    list.innerHTML = items.map((r) => {
+      const info = r.cls === "alive"
+        ? `${r.up ? ("→ " + r.up.replace(/^https?:\/\//, "")) : ""} · ${r.ms}ms`
+        : (r.reason || ("HTTP " + r.http));
+      return `<div class="tp-item">
+        <span class="badge ${r.cls}">${TP_BADGE[r.cls]}</span>
+        <span class="m" title="${escapeAttr(r.model)}">${escapeHtml(r.model)}</span>
+        <span class="info" title="${escapeAttr(r.reason || info)}">${escapeHtml(info)}</span>
+        <button class="mini ghost retry" data-rt="${escapeAttr(r.model)}">重测</button>
+      </div>`;
+    }).join("");
+    list.querySelectorAll("[data-rt]").forEach((b) => b.addEventListener("click", () => tpRetryOne(b.dataset.rt)));
+  }
+  function tpSetFilter(f) {
+    tpFilter = f;
+    $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === f));
+    tpRenderList();
+  }
+  function tpFinish() {
+    const c = tpCounts();
+    $("tpActions").style.display = "flex";
+    $("tpDeleteGone").textContent = `删除失效模型（${c.gone}）`;
+    $("tpDeleteGone").disabled = c.gone === 0;
+    $("tpRetryTemp").textContent = `重测「暂不可用」（${c.temp}）`;
+    $("tpRetryTemp").disabled = c.temp === 0;
+    $("tpTitle").textContent = `${tpBaseTitle} · 完成`;
+  }
+  function tpRoutePrefix() {
+    return (tpContext && tpContext.mode === "self" && endpoints[tpContext.idx]) ? (endpoints[tpContext.idx].name || "") : "";
+  }
+  async function tpRetryOne(model) {
+    const key = $("proxyKey").value.trim(); if (!key) return toast("先填 PROXY_API_KEY", "err");
+    const res = await probeModel(model, key, tpRoutePrefix());
+    const i = tpResults.findIndex((r) => r.model === model);
+    if (i >= 0) tpResults[i] = res; else tpResults.push(res);
+    tpRenderStat(); tpRenderList(); tpFinish();
+  }
+  async function tpRetryTempModels() {
+    const key = $("proxyKey").value.trim(); if (!key) return toast("先填 PROXY_API_KEY", "err");
+    const temps = tpResults.filter((r) => r.cls === "temp").map((r) => r.model);
+    if (!temps.length) return;
+    const prefix = tpRoutePrefix();
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    const queue = [...temps]; const total = temps.length; let done = 0;
+    async function w() {
+      while (queue.length > 0) {
+        const m = queue.shift();
+        const res = await probeModel(m, key, prefix);
+        const i = tpResults.findIndex((r) => r.model === m); if (i >= 0) tpResults[i] = res;
+        done++; tpUpdateProgress(done, total); tpRenderStat(); tpRenderList();
+      }
+    }
+    const ws = []; for (let i = 0; i < Math.min(concurrency, total); i++) ws.push(w());
+    await Promise.all(ws);
+    tpFinish();
+  }
+  async function applyDeleteGone() {
+    const goneSet = new Set(tpResults.filter((r) => r.cls === "gone").map((r) => r.model));
+    if (!goneSet.size) return;
+    if (tpContext && tpContext.mode === "self") {
+      const ep = endpoints[tpContext.idx];
+      if (ep && ep.models) ep.models = ep.models.filter((m) => !goneSet.has(m));
+    } else {
+      endpoints.forEach((ep) => { if (ep.models) ep.models = ep.models.filter((m) => !goneSet.has(m)); });
+    }
+    render(); await save();
+    toast(`已删除 ${goneSet.size} 个失效模型`, "ok");
+    $("tpDeleteGone").disabled = true; $("tpDeleteGone").textContent = "失效模型已删除";
+  }
+  function tpExportResults() {
+    if (!tpResults.length) return toast("还没有结果可导出", "err");
+    const head = "status\tmodel\tupstream\tlatency_ms\treason";
+    const lines = tpResults.map((r) => `${r.cls}\t${r.model}\t${r.up || ""}\t${r.ms}\t${(r.reason || "").replace(/\s+/g, " ")}`);
+    const text = head + "\n" + lines.join("\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast("已复制到剪贴板", "ok")).catch(() => {});
+    try {
+      const blob = new Blob([text], { type: "text/tab-separated-values" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `测活结果_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.tsv`;
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (e) {}
+  }
+
+  async function selfTestEndpoint(idx) {
+    const ep = endpoints[idx];
+    const key = $("proxyKey").value.trim();
+    const res = document.querySelector(`[data-pingres="${idx}"]`);
+    if (!key) { if (res) { res.className = "ping-res err"; res.textContent = "✗ 先填 PROXY_API_KEY"; } return toast("先填 PROXY_API_KEY", "err"); }
+    if (!ep.models || !ep.models.length) { if (res) { res.className = "ping-res err"; res.textContent = "✗ 该站点暂无模型可测"; } return; }
+    if (res) { res.className = "ping-res wait"; res.textContent = "测活中…见下方结果面板"; }
+    // 先存一份，保证分组路由存在
+    await fetch("/admin/config", { method: "PUT", headers: adminHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ endpoints }) }).catch(() => {});
+    openTestPanel(`筛选可用 · ${ep.name || ep.baseUrl}`, { mode: "self", idx });
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    await runTestEngine(ep.models, key, ep.name || "", concurrency);
+    tpFinish();
+    if (res) { res.className = "ping-res ok"; res.textContent = "✓ 测活完成，见结果面板"; }
   }
 
   async function testAllModelsGlobally() {
     if (!connected) return toast("先连接控制台", "err");
     const key = $("proxyKey").value.trim();
-    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
-    if (!key) { $("proxyKey").focus(); return toast("全库自测依赖鉴权，请先在此框填入 PROXY_API_KEY", "err"); }
+    if (!key) { $("proxyKey").focus(); return toast("先填 PROXY_API_KEY", "err"); }
     buildModelCatalog();
-    const modelsToTest = modelCatalog.map((x) => x.model);
-    if (!modelsToTest.length) return toast("下拉库当前是空的，暂无模型可测", "err");
-    if (!confirm(`魔法测活：系统将对这 ${modelsToTest.length} 个模型进行并发清洗。\n采用 ${concurrency} 线程并发机制，测试结束后将自动从所有站点中【永久剔除】不可用的死模型。\n\n确定开始吗？`)) return;
-    const out = $("testOut"); out.style.display = "block";
-    const queue = [...modelsToTest];
-    const total = queue.length;
-    let completed = 0;
-    const working = new Set();
-    const failed = new Set();
-    async function worker() {
-      while (queue.length > 0) {
-        const m = queue.shift();
-        try {
-          const r = await fetch("/v1/chat/completions", {
-            method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: m, messages: [{ role: "user", content: "hi" }], max_tokens: 1, stream: false }),
-          });
-          const d = await r.json();
-          if (r.ok && d.choices && d.choices.length > 0) { working.add(m); }
-          else { failed.add(m); }
-        } catch (err) { failed.add(m); }
-        completed++;
-        out.textContent = `[魔法全库并发测活] 进度: ${completed} / ${total}\n[并发设置: ${concurrency}线程] 刚刚测试模型: ${m}`;
-      }
-    }
-    const workers = [];
-    for (let i = 0; i < Math.min(concurrency, total); i++) workers.push(worker());
-    await Promise.all(workers);
-    out.textContent = `[魔法全库测活] 测试完成！\n✅ 可用健康模型: ${working.size} 个\n❌ 剔除死链模型: ${failed.size} 个\n\n正在自动清理配置并保存云端...`;
-    if (failed.size > 0) {
-      let changed = false;
-      endpoints.forEach((ep) => {
-        if (ep.models) {
-          const oldLen = ep.models.length;
-          ep.models = ep.models.filter((m) => !failed.has(m));
-          if (ep.models.length !== oldLen) changed = true;
-        }
-      });
-      if (changed) {
-        render();
-        await save();
-        out.textContent += "\n✨ 清洗完毕！现在下拉框里展示的全部是可用模型！";
-      }
-    } else {
-      out.textContent += "\n✨ 恭喜，所有模型均正常可用，无需清理。";
-    }
+    const models = modelCatalog.map((x) => x.model);
+    if (!models.length) return toast("下拉库为空，暂无模型可测", "err");
+    openTestPanel(`魔法全库测活 · ${models.length} 个模型`, { mode: "global" });
+    const concurrency = parseInt($("concurrencySelect").value, 10) || 6;
+    await runTestEngine(models, key, "", concurrency);
+    tpFinish();
   }
 
   async function test() {
@@ -749,6 +901,13 @@
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);
   $("globalTestBtn").addEventListener("click", testAllModelsGlobally);
+
+  // 测活结果面板
+  $("tpClose").addEventListener("click", () => { $("testPanel").style.display = "none"; });
+  $("tpExport").addEventListener("click", tpExportResults);
+  $("tpDeleteGone").addEventListener("click", applyDeleteGone);
+  $("tpRetryTemp").addEventListener("click", tpRetryTempModels);
+  $("tpFilters").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => tpSetFilter(b.dataset.flt)));
 
   $("testModel").addEventListener("focus", openModelMenu);
   $("testModel").addEventListener("input", () => { syncClear(); openModelMenu(); });

@@ -80,16 +80,18 @@ async function applyStats(env, updates) {
 
 // 解析某个 model 的候选上游 + 实际下发给上游的模型名
 function resolveCandidates(cfg, model) {
-  let cands = cfg.endpoints.filter((e) => hasKey(e) && listed(e, model));
-  let chosenModel = model;
-  if (!cands.length && model.includes("/")) {
+  // 显式分组：model="组名/模型名" → 严格只在该组内找(包括该组的 wildcard 站)，
+  // 不允许 fall through 到别家通配兜底，避免 "我点 A，结果 B 在答" 的误判。
+  if (model.includes("/")) {
     const i = model.indexOf("/");
     const g = model.slice(0, i), rm = model.slice(i + 1);
     const gc = cfg.endpoints.filter((e) => e.name === g && hasKey(e) && (listed(e, rm) || wildcard(e)));
-    if (gc.length) { cands = gc; chosenModel = rm; }
+    return { cands: gc, chosenModel: rm };
   }
+  // 裸模型名：先找列出该模型的；都没有再走全局通配兜底
+  let cands = cfg.endpoints.filter((e) => hasKey(e) && listed(e, model));
   if (!cands.length) cands = cfg.endpoints.filter((e) => hasKey(e) && wildcard(e));
-  return { cands, chosenModel };
+  return { cands, chosenModel: model };
 }
 
 // 尝试一个 model：在其候选上游间做故障转移。成功(HTTP<400)→ {ok:true, resp, ep, chosenModel}；否则 {ok:false, resp:最后的错误响应|null}

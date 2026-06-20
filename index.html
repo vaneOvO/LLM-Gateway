@@ -1216,7 +1216,9 @@
       const ex = endpoints.find((e) => normUrl(e.baseUrl).toLowerCase() === k);
       if (ex) {
         if (it.name) ex.name = it.name;
-        if (it.apiKeys.length) ex.apiKeys = it.apiKeys;   // 覆盖密钥
+        // 把导入的 access_token 合并进该站点的 API Keys（去重，保留已有，多个随机轮换）
+        ex.apiKeys = Array.isArray(ex.apiKeys) ? ex.apiKeys : [];
+        it.apiKeys.forEach((k) => { if (k && !ex.apiKeys.includes(k)) ex.apiKeys.push(k); });
         if (it.models.length) ex.models = it.models;      // 仅当导入带模型才覆盖，否则保留已有模型
         updated++;
       } else {

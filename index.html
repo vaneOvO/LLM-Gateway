@@ -195,6 +195,15 @@
   .grid-sync { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   @media (max-width: 560px) { .grid-sync { grid-template-columns: 1fr 1fr; } }
 
+  /* 导入弹窗 */
+  .modal-overlay { position: fixed; inset: 0; z-index: 100; display: none; align-items: flex-start; justify-content: center; padding: 56px 16px; background: rgba(3,5,7,.6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); overflow-y: auto; }
+  .modal-overlay.open { display: flex; animation: fadeIn .2s var(--ease); }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal { width: 100%; max-width: 640px; margin: 0 !important; animation: modalPop .3s var(--ease) both !important; }
+  @keyframes modalPop { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+  .modal h2 .x { float: right; cursor: pointer; color: var(--faint); font-size: 18px; line-height: 1; margin-top: -2px; transition: color .15s; }
+  .modal h2 .x:hover { color: var(--text); }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
   }
@@ -230,6 +239,8 @@
       <button class="mini" id="saveBtn" disabled>保存配置</button>
       <button class="mini ghost" id="toggleAllBtn">折叠全部</button>
       <span class="spacer"></span>
+      <button class="mini ghost" id="importBtn">导入</button>
+      <button class="mini ghost" id="exportBtn">导出</button>
       <button class="mini ghost" id="refreshStatsBtn">刷新统计</button>
       <button class="mini ghost" id="resetStatsBtn">清零统计</button>
     </div>
@@ -356,6 +367,25 @@
     </div>
   </section>
 
+</div>
+
+<div class="modal-overlay" id="importModal">
+  <div class="modal card">
+    <h2>导入站点 <span class="x" id="importX">✕</span></h2>
+    <div class="hint" style="margin-bottom:12px;">支持本网关导出的 JSON，或 all-api-hub 备份。规则：按 <b>Base URL</b> 匹配，已存在→覆盖（名称/密钥，保留已有模型），不存在→新增；同一站点的多个账号自动合并为多 key。导入后请检查再点「保存配置」。</div>
+    <div class="bar" style="margin-top:0;">
+      <button class="mini" id="importFileBtn">选择 JSON 文件…</button>
+      <span class="hint" id="importFileName">未选择文件</span>
+    </div>
+    <textarea id="importText" style="min-height:170px; margin-top:10px;" placeholder="把 JSON 粘贴到这里，或点上方「选择 JSON 文件」上传…"></textarea>
+    <div class="bar">
+      <button class="primary mini" id="importConfirmBtn">导入</button>
+      <button class="mini ghost" id="importCancelBtn">取消</button>
+      <span class="spacer"></span>
+      <span class="hint" id="importMsg"></span>
+    </div>
+  </div>
+  <input type="file" id="importFile" accept="application/json,.json" style="display:none" />
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1133,6 +1163,91 @@
     }
   });
 
+  // ===== 导入 / 导出 站点 =====
+  function normUrl(u) { return String(u || "").trim().replace(/\/+$/, ""); }
+
+  // 解析导入数据 → [{name, baseUrl, apiKeys[], models[]}]，按归一化 baseUrl 归并（多账号→多 key）
+  function parseImportData(data) {
+    const raw = [];
+    if (data && data.accounts && Array.isArray(data.accounts.accounts)) {
+      // all-api-hub 备份格式
+      data.accounts.accounts.forEach((a) => {
+        const url = normUrl(a.site_url);
+        if (!url) return;
+        const baseUrl = /\/v\d+$/.test(url) ? url : url + "/v1"; // 站点根域自动补 /v1
+        const tok = (a.account_info && a.account_info.access_token) ? String(a.account_info.access_token).trim() : "";
+        raw.push({ name: a.site_name || "", baseUrl, apiKeys: tok ? [tok] : [], models: [] });
+      });
+    } else {
+      // 本网关导出格式：数组 或 {endpoints:[...]}
+      const arr = Array.isArray(data) ? data : (Array.isArray(data && data.endpoints) ? data.endpoints : null);
+      if (!arr) throw new Error("无法识别的 JSON：既不是 all-api-hub 备份，也不是本网关导出格式");
+      arr.forEach((e) => {
+        const baseUrl = normUrl(e.baseUrl || e.base_url || e.url);
+        if (!baseUrl) return;
+        const keys = Array.isArray(e.apiKeys) ? e.apiKeys : (Array.isArray(e.api_keys) ? e.api_keys : (e.apiKey ? [e.apiKey] : []));
+        const models = Array.isArray(e.models) ? e.models : [];
+        raw.push({ name: e.name || "", baseUrl, apiKeys: keys.map(String).map((s) => s.trim()).filter(Boolean), models: models.map(String) });
+      });
+    }
+    const map = new Map();
+    raw.forEach((r) => {
+      const k = normUrl(r.baseUrl).toLowerCase();
+      let g = map.get(k);
+      if (!g) { g = { name: r.name, baseUrl: r.baseUrl, apiKeys: [], models: [] }; map.set(k, g); }
+      if (!g.name && r.name) g.name = r.name;
+      r.apiKeys.forEach((x) => { if (x && !g.apiKeys.includes(x)) g.apiKeys.push(x); });
+      r.models.forEach((m) => { if (m && !g.models.includes(m)) g.models.push(m); });
+    });
+    return [...map.values()];
+  }
+
+  function doImport() {
+    const txt = $("importText").value.trim();
+    if (!txt) { $("importMsg").textContent = "请先粘贴或选择 JSON"; return; }
+    let data;
+    try { data = JSON.parse(txt); } catch (e) { $("importMsg").textContent = "JSON 解析失败：" + e.message; return; }
+    let list;
+    try { list = parseImportData(data); } catch (e) { $("importMsg").textContent = e.message; return; }
+    if (!list.length) { $("importMsg").textContent = "没解析到任何站点"; return; }
+    let added = 0, updated = 0;
+    list.forEach((it) => {
+      const k = normUrl(it.baseUrl).toLowerCase();
+      const ex = endpoints.find((e) => normUrl(e.baseUrl).toLowerCase() === k);
+      if (ex) {
+        if (it.name) ex.name = it.name;
+        if (it.apiKeys.length) ex.apiKeys = it.apiKeys;   // 覆盖密钥
+        if (it.models.length) ex.models = it.models;      // 仅当导入带模型才覆盖，否则保留已有模型
+        updated++;
+      } else {
+        endpoints.push({ name: it.name, baseUrl: it.baseUrl, apiKeys: it.apiKeys, models: it.models, _uid: ++uidSeq });
+        added++;
+      }
+    });
+    setDirty(true);
+    render();
+    closeImportModal();
+    toast(`已导入：新增 ${added} · 覆盖 ${updated}，请检查后点「保存配置」`, "ok");
+  }
+
+  function exportSites() {
+    const data = {
+      type: "llm-gateway-sites", version: 1, exportedAt: new Date().toISOString(),
+      endpoints: endpoints.map((e) => ({ name: e.name || "", baseUrl: e.baseUrl || "", apiKeys: e.apiKeys || [], models: e.models || [] })),
+    };
+    const text = JSON.stringify(data, null, 2);
+    try {
+      const blob = new Blob([text], { type: "application/json" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = `llm-gateway-sites-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      toast(`已导出 ${data.endpoints.length} 个站点`, "ok");
+    } catch (e) { toast("导出失败：" + e.message, "err"); }
+  }
+
+  function openImportModal() { $("importMsg").textContent = ""; $("importModal").classList.add("open"); }
+  function closeImportModal() { $("importModal").classList.remove("open"); }
+
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
   function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
@@ -1163,6 +1278,22 @@
   });
   $("saveBtn").addEventListener("click", save);
   $("toggleAllBtn").addEventListener("click", toggleAllCards);
+  $("importBtn").addEventListener("click", () => { if (!connected) return toast("先连接控制台", "err"); openImportModal(); });
+  $("exportBtn").addEventListener("click", () => { if (!connected) return toast("先连接控制台", "err"); if (!endpoints.length) return toast("还没有站点可导出", "err"); exportSites(); });
+  $("importX").addEventListener("click", closeImportModal);
+  $("importCancelBtn").addEventListener("click", closeImportModal);
+  $("importConfirmBtn").addEventListener("click", doImport);
+  $("importFileBtn").addEventListener("click", () => $("importFile").click());
+  $("importFile").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { $("importText").value = String(rd.result || ""); $("importFileName").textContent = f.name; $("importMsg").textContent = "已载入文件，点「导入」"; };
+    rd.onerror = () => { $("importMsg").textContent = "读取文件失败"; };
+    rd.readAsText(f);
+    e.target.value = ""; // 允许重复选同一文件
+  });
+  $("importModal").addEventListener("click", (e) => { if (e.target === $("importModal")) closeImportModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("importModal").classList.contains("open")) closeImportModal(); });
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);

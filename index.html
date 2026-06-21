@@ -203,6 +203,19 @@
   @keyframes modalPop { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
   .modal h2 .x { float: right; cursor: pointer; color: var(--faint); font-size: 18px; line-height: 1; margin-top: -2px; transition: color .15s; }
   .modal h2 .x:hover { color: var(--text); }
+  /* 导入逐行进度 */
+  #importProgress { max-height: 260px; overflow-y: auto; margin-top: 12px; }
+  .imp-bar { height: 4px; background: rgba(255,255,255,.06); border-radius: 999px; overflow: hidden; margin: 2px 0 10px; }
+  .imp-bar-fill { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #7af0c8); box-shadow: 0 0 10px rgba(52,211,153,.5); transition: width .25s var(--ease); }
+  .imp-row { display: flex; align-items: center; gap: 9px; padding: 6px 4px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--line-soft); }
+  .imp-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+  .imp-dot.run { background: var(--warn); animation: impPulse 1s ease-in-out infinite; }
+  .imp-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(52,211,153,.5); }
+  .imp-dot.err { background: var(--danger-text); }
+  @keyframes impPulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  .imp-name { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .imp-stat { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .imp-stat.ok { color: var(--ok); } .imp-stat.err { color: var(--danger-text); }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
@@ -388,6 +401,7 @@
       <span class="spacer"></span>
       <span class="hint" id="importMsg"></span>
     </div>
+    <div id="importProgress" style="display:none;"></div>
   </div>
   <input type="file" id="importFile" accept="application/json,.json" style="display:none" />
 </div>
@@ -454,6 +468,13 @@
     const expand = epOpenCount() === 0; // 当前全收起→展开全部；否则折叠全部
     endpoints.forEach((e) => { if (expand) openSet.add(e._uid); else openSet.delete(e._uid); });
     document.querySelectorAll("#epList .ep").forEach((card) => card.classList.toggle("open", expand));
+    updateToggleAllLabel();
+  }
+  // 折叠全部（点击卡片外背景时用）
+  function collapseAllCards() {
+    if (!epOpenCount()) return;
+    endpoints.forEach((e) => openSet.delete(e._uid));
+    document.querySelectorAll("#epList .ep.open").forEach((c) => c.classList.remove("open"));
     updateToggleAllLabel();
   }
 
@@ -1217,31 +1238,64 @@
     try { list = parseImportData(data); } catch (e) { $("importMsg").textContent = e.message; return; }
     if (!list.length) { $("importMsg").textContent = "没解析到任何站点"; return; }
 
-    // 可选：用 access_token 在服务端换取真正的 sk- 密钥
+    // 可选：用 access_token 在服务端换取真正的 sk- 密钥（逐站点，实时显示每行进度/报错）
+    let provisioned = false, provOk = 0, provFail = 0;
     if ($("importProvision").checked) {
       const prov = list.filter((it) => it.accessToken && it.userId);
       if (prov.length) {
+        provisioned = true;
         $("importConfirmBtn").disabled = true;
-        $("importMsg").textContent = `正在用 access_token 换取 sk- 密钥（${prov.length} 站，可能需十几秒）…`;
-        try {
-          const r = await fetch("/admin/provision-keys", {
-            method: "POST", headers: adminHeaders({ "Content-Type": "application/json" }),
-            body: JSON.stringify({ sites: prov.map((it) => ({ baseUrl: it.baseUrl, accessToken: it.accessToken, userId: it.userId, siteType: it.siteType })) }),
-          });
-          const d = await r.json();
-          if (r.ok && d.results) {
-            const byUrl = {}; d.results.forEach((x) => { byUrl[normUrl(x.baseUrl).toLowerCase()] = x; });
-            let okN = 0, failN = 0;
-            list.forEach((it) => {
-              const res = byUrl[normUrl(it.baseUrl).toLowerCase()];
-              if (res && res.ok && res.keys && res.keys.length) { it.apiKeys = res.keys; okN++; }
-              else if (res && !res.ok) failN++;
-            });
-            $("importMsg").textContent = `换取完成：成功 ${okN} · 失败 ${failN}（失败的退回用 access_token）`;
-          } else {
-            $("importMsg").textContent = "换取失败：" + (d.error || r.status) + "，退回用 access_token";
+        $("importMsg").textContent = `用 access_token 换取 sk- 密钥中…（${prov.length} 站）`;
+        const box = $("importProgress");
+        box.style.display = "block";
+        box.innerHTML = `<div class="imp-bar"><div class="imp-bar-fill" id="impFill"></div></div><div id="impRows"></div>`;
+        const rowsEl = $("impRows");
+        const idOf = {};
+        prov.forEach((it, i) => {
+          const id = "imp_" + i;
+          idOf[normUrl(it.baseUrl).toLowerCase()] = id;
+          const div = document.createElement("div");
+          div.className = "imp-row";
+          div.innerHTML = `<span class="imp-dot" id="${id}_d"></span><span class="imp-name" title="${escapeHtml(it.baseUrl)}">${escapeHtml(it.name || it.baseUrl)}</span><span class="imp-stat" id="${id}_s">等待中</span>`;
+          rowsEl.appendChild(div);
+        });
+        const setRow = (it, cls, text) => {
+          const id = idOf[normUrl(it.baseUrl).toLowerCase()];
+          const d = document.getElementById(id + "_d"), s = document.getElementById(id + "_s");
+          if (d) d.className = "imp-dot " + cls;
+          if (s) { s.className = "imp-stat" + (cls === "ok" ? " ok" : (cls === "err" ? " err" : "")); s.textContent = text; }
+        };
+        const queue = [...prov];
+        let done = 0;
+        const worker = async () => {
+          while (queue.length) {
+            const it = queue.shift();
+            setRow(it, "run", "换取中…");
+            try {
+              const r = await fetch("/admin/provision-keys", {
+                method: "POST", headers: adminHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ sites: [{ baseUrl: it.baseUrl, accessToken: it.accessToken, userId: it.userId, siteType: it.siteType }] }),
+              });
+              const d = await r.json().catch(() => null);
+              const res = d && d.results && d.results[0];
+              if (r.ok && res && res.ok && res.keys && res.keys.length) {
+                it.apiKeys = res.keys; provOk++;
+                setRow(it, "ok", `✓ sk- 已获取（令牌 ${res.tokenName || "?"}${res.group ? " · " + res.group : ""}）`);
+              } else {
+                provFail++;
+                setRow(it, "err", "✗ " + ((res && res.error) || (d && d.error) || ("HTTP " + r.status)) + " · 退回 access_token");
+              }
+            } catch (e) {
+              provFail++;
+              setRow(it, "err", "✗ " + (e.message || e) + " · 退回 access_token");
+            }
+            done++;
+            const fill = $("impFill"); if (fill) fill.style.width = Math.round((done / prov.length) * 100) + "%";
           }
-        } catch (e) { $("importMsg").textContent = "换取出错：" + (e.message || e) + "，退回用 access_token"; }
+        };
+        const ws = []; for (let k = 0; k < Math.min(3, prov.length); k++) ws.push(worker());
+        await Promise.all(ws);
+        $("importMsg").textContent = `换取完成：成功 ${provOk} · 失败 ${provFail}（失败的退回 access_token）`;
         $("importConfirmBtn").disabled = false;
       }
     }
@@ -1263,8 +1317,13 @@
     });
     setDirty(true);
     render();
-    closeImportModal();
     toast(`已导入：新增 ${added} · 覆盖 ${updated}，请检查后点「保存配置」`, "ok");
+    if (provisioned) {
+      // 保留弹窗，让你看完每行换取结果（含失败原因）再手动关闭
+      $("importMsg").textContent = `已导入：新增 ${added} · 覆盖 ${updated} · 换取成功 ${provOk}/失败 ${provFail}。检查无误后关闭并点「保存配置」。`;
+    } else {
+      closeImportModal();
+    }
   }
 
   function exportSites() {
@@ -1282,7 +1341,7 @@
     } catch (e) { toast("导出失败：" + e.message, "err"); }
   }
 
-  function openImportModal() { $("importMsg").textContent = ""; $("importModal").classList.add("open"); }
+  function openImportModal() { $("importMsg").textContent = ""; const p = $("importProgress"); p.style.display = "none"; p.innerHTML = ""; $("importModal").classList.add("open"); }
   function closeImportModal() { $("importModal").classList.remove("open"); }
 
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -1331,6 +1390,12 @@
   });
   $("importModal").addEventListener("click", (e) => { if (e.target === $("importModal")) closeImportModal(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("importModal").classList.contains("open")) closeImportModal(); });
+  // 点击卡片之外的背景 → 自动折叠所有上游站点卡片（点卡片/按钮/输入/弹窗内不触发）
+  document.addEventListener("click", (e) => {
+    if (!epOpenCount()) return;
+    if (e.target.closest(".card, .modal-overlay, button, input, textarea, select, a, label, .combo-menu")) return;
+    collapseAllCards();
+  });
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);

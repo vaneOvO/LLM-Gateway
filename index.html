@@ -375,6 +375,7 @@
       <div class="tp-head">
         <span class="ttl" id="tpTitle">测活结果</span>
         <span class="spacer"></span>
+        <button class="mini ghost" id="tpStop" style="display:none; color:var(--danger-text); border-color:var(--danger-line);">停止</button>
         <button class="mini ghost" id="tpExport">导出</button>
         <button class="mini ghost" id="tpClose">关闭</button>
       </div>
@@ -399,9 +400,13 @@
     <h2>图像调试</h2>
     <div class="row" style="margin-bottom:12px;">
       <div style="flex:1; min-width:180px;">
-        <label>图像模型（按模型名路由，挂了自动走「图像兜底」）</label>
-        <input id="imgModel" list="imgModelList" placeholder="gpt-image-2" />
-        <datalist id="imgModelList"></datalist>
+        <label>图像模型（下拉仅展示可用图像模型，可自由填入 站点/模型名）</label>
+        <div class="combo" id="imgModelCombo">
+          <input id="imgModel" autocomplete="off" placeholder="gpt-image-2" />
+          <svg class="combo-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+          <button type="button" class="combo-clear" id="imgModelClear" title="清空">&times;</button>
+          <div class="combo-menu" id="imgModelMenu"></div>
+        </div>
       </div>
       <div style="flex:none; width:140px;">
         <label>尺寸</label>
@@ -1007,16 +1012,19 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   const TEST_TIMEOUT = 30000; // 单次请求超时(ms)
   // site = { baseUrl, name }；用 X-Force-Upstream 钉死到该站点，绝不外溢到别家
   async function probeModel(model, key, site) {
+    const isImg = IMG_MODEL_RX.test(model);
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), TEST_TIMEOUT);
+    const t = setTimeout(() => ctrl.abort(), isImg ? 60000 : TEST_TIMEOUT);
     const start = Date.now();
     const headers = { "Authorization": "Bearer " + key, "Content-Type": "application/json" };
     if (site && site.baseUrl) headers["X-Force-Upstream"] = site.baseUrl;
     const siteName = site ? (site.name || site.baseUrl) : "";
     try {
-      const r = await fetch("/v1/chat/completions", {
+      const r = await fetch(isImg ? "/v1/images/generations" : "/v1/chat/completions", {
         method: "POST", signal: ctrl.signal, headers,
-        body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], max_tokens: 16, stream: false }),
+        body: JSON.stringify(isImg
+          ? { model, prompt: "a red apple", n: 1, size: "1024x1024" }
+          : { model, messages: [{ role: "user", content: "hi" }], max_tokens: 16, stream: false }),
       });
       clearTimeout(t);
       const d = await r.json().catch(() => null);
@@ -1026,7 +1034,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
       return { model, baseUrl: site ? site.baseUrl : "", site: siteName, cls, http: r.status, ms: Date.now() - start, up: r.headers.get("X-Upstream"), reason: (reason || "").slice(0, 160) };
     } catch (e) {
       clearTimeout(t);
-      return { model, baseUrl: site ? site.baseUrl : "", site: siteName, cls: "temp", http: 0, ms: Date.now() - start, up: null, reason: e.name === "AbortError" ? "超时(30s)" : String(e).slice(0, 160) };
+      return { model, baseUrl: site ? site.baseUrl : "", site: siteName, cls: "temp", http: 0, ms: Date.now() - start, up: null, reason: e.name === "AbortError" ? ("超时(" + (isImg ? 60 : 30) + "s)") : String(e).slice(0, 160) };
     }
   }
   // 并发跑一批 (站点,模型) 对；temp 自动重试 1 次；结果写入 tpResults 并实时刷新面板
@@ -1034,7 +1042,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     const queue = [...pairs];
     const total = pairs.length;
     let done = 0;
-    tpAborted = false;
+    tpAborted = false; tpAuthFail = false;
     async function worker() {
       while (queue.length > 0 && !tpAborted) {
         const p = queue.shift();
@@ -1045,7 +1053,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
         tpUpdateProgress(done, total);
         tpRenderStat();
         tpRenderList();
-        if (res.cls === "auth") { tpAborted = true; queue.length = 0; } // 鉴权失败：停
+        if (res.cls === "auth") { tpAborted = true; tpAuthFail = true; queue.length = 0; } // 鉴权失败：停
       }
     }
     const ws = [];
@@ -1059,6 +1067,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   let tpContext = null;
   let tpFilter = "all";
   let tpAborted = false;
+  let tpAuthFail = false;
   let tpBaseTitle = "测活结果";
   const TP_BADGE = { alive: "可用", temp: "暂不可用", gone: "失效", auth: "鉴权失败" };
 
@@ -1081,6 +1090,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     $("testPanel").style.display = "block";
     $("tpTitle").textContent = title;
     $("tpActions").style.display = "none";
+    const stop = $("tpStop"); if (stop) { stop.style.display = "inline-block"; stop.disabled = false; stop.textContent = "停止"; }
     $("tpDeleteGone").disabled = false; $("tpRetryTemp").disabled = false;
     $("tpBarFill").style.width = "0%";
     $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === "all"));
@@ -1097,7 +1107,8 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     const uniq = tpGroup().length;
     let html = `共 <b>${uniq}</b> 个模型 · <span class="alive">可用 ${c.alive}</span> · <span class="temp">暂不可用 ${c.temp}</span> · <span class="gone">失效 ${c.gone}</span>`;
     if (c.auth) html += ` · <span class="gone">鉴权失败 ${c.auth}</span>`;
-    if (tpAborted) html = `<span class="gone">❌ PROXY_API_KEY 不正确（收到 401）：请确认测试框里的密钥与后台 PROXY_API_KEY 完全一致、无空格。已中止测试。</span><br>` + html;
+    if (tpAuthFail) html = `<span class="gone">❌ PROXY_API_KEY 不正确（收到 401）：请确认测试框里的密钥与后台 PROXY_API_KEY 完全一致、无空格。已中止测试。</span><br>` + html;
+    else if (tpAborted) html = `<span class="temp">⏹ 已手动停止 · 已测出的结果如下</span><br>` + html;
     $("tpStat").innerHTML = html;
   }
   function tpRenderList() {
@@ -1133,7 +1144,10 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   function tpFinish() {
     const gonePairs = tpResults.filter((r) => r.cls === "gone").length;
     const tempPairs = tpResults.filter((r) => r.cls === "temp").length;
-    const aliveModels = tpGroup().filter((g) => g.overall === "alive").length;
+    const alive = tpGroup().filter((g) => g.overall === "alive");
+    const imgN = alive.filter((g) => IMG_MODEL_RX.test(g.model)).length;
+    const aliveModels = alive.length;
+    const stop = $("tpStop"); if (stop) stop.style.display = "none";
     $("tpActions").style.display = "flex";
     $("tpDeleteGone").textContent = `删除失效模型（${gonePairs}）`;
     $("tpDeleteGone").disabled = gonePairs === 0;
@@ -1141,17 +1155,20 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     $("tpRetryTemp").disabled = tempPairs === 0;
     const sf = $("tpSetFallback");
     sf.style.display = aliveModels > 0 ? "inline-block" : "none";
-    sf.textContent = `设为兜底池（可用 ${aliveModels}）`;
-    $("tpTitle").textContent = `${tpBaseTitle} · 完成`;
+    sf.textContent = imgN > 0 ? `设为兜底池（聊天 ${aliveModels - imgN} · 图像 ${imgN}）` : `设为兜底池（可用 ${aliveModels}）`;
+    $("tpTitle").textContent = `${tpBaseTitle} · ${tpAborted ? "已停止" : "完成"}`;
   }
-  // 把本次测活「可用」的模型(同名去重、按最快延迟排序)写入兜底池并保存
+  // 把本次测活「可用」的模型(同名去重、按最快延迟排序)写入兜底池并保存；图像模型→图像兜底，其余→聊天兜底
   async function tpSetAsFallback() {
-    const aliveModels = tpGroup().filter((g) => g.overall === "alive").sort((a, b) => a.bestMs - b.bestMs).map((g) => g.model);
-    if (!aliveModels.length) return toast("没有可用模型可设", "err");
-    $("fallbackBox").value = aliveModels.join("\n");
+    const alive = tpGroup().filter((g) => g.overall === "alive").sort((a, b) => a.bestMs - b.bestMs);
+    const imageModels = alive.filter((g) => IMG_MODEL_RX.test(g.model)).map((g) => g.model);
+    const chatModels = alive.filter((g) => !IMG_MODEL_RX.test(g.model)).map((g) => g.model);
+    if (!imageModels.length && !chatModels.length) return toast("没有可用模型可设", "err");
+    if (chatModels.length) $("fallbackBox").value = chatModels.join("\n");
+    if (imageModels.length) $("imageFallbackBox").value = imageModels.join("\n");
     setDirty(true);
     await save();
-    toast(`已把 ${aliveModels.length} 个可用模型设为兜底池`, "ok");
+    toast(`已设兜底：聊天 ${chatModels.length} · 图像 ${imageModels.length}`, "ok");
   }
   // 重测某个模型：把它在所有相关站点上的 (站点,模型) 对都重测一遍
   async function tpRetryOne(model) {
@@ -1504,12 +1521,50 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
 
   // ===== 图像调试 =====
   const IMG_MODEL_RX = /image|img|dall|flux|imagen|stable|sdxl|sd3|nano-banana|qwen-image|seedream|seededit|kolors|gpt-image|hunyuan-image|cogview|playground|recraft|ideogram|grok-imagine|z-image/i;
+  let imgModelCatalog = [];
   function buildImageModelList() {
-    const dl = $("imgModelList"); if (!dl) return;
-    const set = new Set();
-    endpoints.forEach((ep) => (ep.models || []).forEach((m) => { if (IMG_MODEL_RX.test(m)) set.add(m); }));
-    dl.innerHTML = [...set].map((m) => `<option value="${escapeAttr(m)}"></option>`).join("");
-    const inp = $("imgModel"); if (inp && !inp.value && set.size) inp.value = [...set][0];
+    const providers = {};
+    endpoints.forEach((ep) => {
+      const up = ep.name || "未命名";
+      (ep.models || []).forEach((mm) => {
+        if (!IMG_MODEL_RX.test(mm)) return;
+        if (!providers[mm]) providers[mm] = [];
+        if (!providers[mm].includes(up)) providers[mm].push(up);
+      });
+    });
+    imgModelCatalog = Object.keys(providers).sort().map((model) => ({ model, count: providers[model].length, upstreams: providers[model] }));
+    imgSyncClear();
+    renderImgMenu($("imgModel").value.trim());
+    const inp = $("imgModel"); if (inp && !inp.value && imgModelCatalog.length) inp.value = imgModelCatalog[0].model, imgSyncClear();
+  }
+  function imgSyncClear() { $("imgModelCombo").classList.toggle("has-val", !!$("imgModel").value.trim()); }
+  function renderImgMenu(filter) {
+    const menu = $("imgModelMenu");
+    const q = (filter || "").toLowerCase();
+    const items = imgModelCatalog.filter((x) => x.model.toLowerCase().includes(q));
+    if (!items.length) {
+      menu.innerHTML = `<div class="combo-none">${imgModelCatalog.length ? "没有匹配的图像模型" : "站点里没有图像模型（先在上游拉取/填写含 image / dall / flux / imagen / gpt-image 等的模型名）"}</div>`;
+      return;
+    }
+    menu.innerHTML = items
+      .map((x) => `<div class="combo-item" data-m="${escapeAttr(x.model)}">
+          <div style="display:flex; flex-direction:column; overflow:hidden;">
+            <span class="nm">${escapeHtml(x.model)}</span>
+            ${x.upstreams && x.upstreams.length > 0 ? `<span class="upstreams">由 ${escapeHtml(x.upstreams.join(', '))} 提供</span>` : ""}
+          </div>
+          ${x.count > 1 ? `<span class="combo-badge">×${x.count}</span>` : ""}
+        </div>`)
+      .join("");
+    menu.querySelectorAll(".combo-item").forEach((it) => {
+      it.addEventListener("mousedown", (e) => { e.preventDefault(); $("imgModel").value = it.dataset.m; imgSyncClear(); closeImgMenu(); });
+    });
+  }
+  function openImgMenu() { renderImgMenu($("imgModel").value.trim()); $("imgModelMenu").classList.add("open"); $("imgModelCombo").classList.add("open"); }
+  function closeImgMenu() { $("imgModelMenu").classList.remove("open"); $("imgModelCombo").classList.remove("open"); }
+  let imgCtrl = null, imgStopped = false;
+  function imgGenClick() {
+    if (imgCtrl) { imgStopped = true; try { imgCtrl.abort(); } catch {} return; } // 正在生成 → 停止
+    generateImage();
   }
   async function generateImage() {
     const key = $("proxyKey").value.trim();
@@ -1520,8 +1575,10 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     const size = $("imgSize").value;
     const fmt = $("imgFormat").value;
     const btn = $("imgGenBtn"), st = $("imgStatus"), out = $("imgResult");
-    btn.disabled = true; st.className = "ping-res wait"; st.textContent = "生成中…（图像较慢，可能十几秒）"; out.style.display = "none"; out.innerHTML = "";
-    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 130000);
+    btn.textContent = "停止"; btn.style.background = "linear-gradient(180deg,#fb7185,#e11d48)"; btn.style.borderColor = "transparent";
+    st.className = "ping-res wait"; st.textContent = "生成中…（图像较慢，可能十几秒，可点「停止」中止）"; out.style.display = "none"; out.innerHTML = "";
+    const ctrl = new AbortController(); imgCtrl = ctrl; imgStopped = false;
+    const timer = setTimeout(() => ctrl.abort(), 130000);
     const t0 = Date.now();
     try {
       let url, opt;
@@ -1558,12 +1615,13 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
         out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">✗ 没出图（HTTP ${r.status}）：${escapeHtml(text.slice(0, 300))}</div></div>`;
       }
     } catch (e) {
-      clearTimeout(timer);
-      st.className = "ping-res err"; st.textContent = "✗ " + (e.name === "AbortError" ? "超时(130s)" : (e.message || e));
+      const stopped = imgStopped;
+      st.className = "ping-res err"; st.textContent = stopped ? "⏹ 已停止" : ("✗ " + (e.name === "AbortError" ? "超时(130s)" : (e.message || e)));
       out.style.display = "block";
-      out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">✗ ${escapeHtml(e.name === "AbortError" ? "请求超时（130s）" : (e.message || String(e)))}</div></div>`;
+      out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">${stopped ? "⏹ 已手动停止" : ("✗ " + escapeHtml(e.name === "AbortError" ? "请求超时（130s）" : (e.message || String(e))))}</div></div>`;
+    } finally {
+      clearTimeout(timer); imgCtrl = null; btn.textContent = "生成图像"; btn.style.background = ""; btn.style.borderColor = "";
     }
-    btn.disabled = false;
   }
 
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
@@ -1572,7 +1630,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   $("connectBtn").addEventListener("click", connect);
   $("fallbackBox").addEventListener("input", () => setDirty(true));
   $("imageFallbackBox").addEventListener("input", () => setDirty(true));
-  $("imgGenBtn").addEventListener("click", generateImage);
+  $("imgGenBtn").addEventListener("click", imgGenClick);
   $("syncToggle").addEventListener("click", () => { syncEnabled = !syncEnabled; updateSyncToggleUI(); setDirty(true); applyScheduler(); });
   $("syncAutoTest").addEventListener("click", () => { syncAutoTest = !syncAutoTest; updateSyncToggleUI(); setDirty(true); });
   $("syncNowBtn").addEventListener("click", () => runServerSync(false));
@@ -1627,6 +1685,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
 
   // 测活结果面板
   $("tpClose").addEventListener("click", () => { $("testPanel").style.display = "none"; });
+  $("tpStop").addEventListener("click", () => { tpAborted = true; $("tpStop").textContent = "停止中…"; $("tpStop").disabled = true; });
   $("tpExport").addEventListener("click", tpExportResults);
   $("tpDeleteGone").addEventListener("click", applyDeleteGone);
   $("tpRetryTemp").addEventListener("click", tpRetryTempModels);
@@ -1637,6 +1696,11 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   $("testModel").addEventListener("input", () => { syncClear(); openModelMenu(); });
   $("modelClear").addEventListener("click", () => { $("testModel").value = ""; syncClear(); $("testModel").focus(); openModelMenu(); });
   document.addEventListener("click", (e) => { if (!$("modelCombo").contains(e.target)) closeModelMenu(); });
+
+  $("imgModel").addEventListener("focus", openImgMenu);
+  $("imgModel").addEventListener("input", () => { imgSyncClear(); openImgMenu(); });
+  $("imgModelClear").addEventListener("click", () => { $("imgModel").value = ""; imgSyncClear(); $("imgModel").focus(); openImgMenu(); });
+  document.addEventListener("click", (e) => { if (!$("imgModelCombo").contains(e.target)) closeImgMenu(); });
 
   window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 

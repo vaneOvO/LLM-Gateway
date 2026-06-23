@@ -11,10 +11,13 @@ function gj(data, status = 200) {
 async function loadConfig(env) {
   try {
     const raw = await env.CONFIG_KV.get("config");
-    if (!raw) return { endpoints: [] };
+    if (!raw) return { endpoints: [], imageFallbackModels: [] };
     const c = JSON.parse(raw);
-    return { endpoints: Array.isArray(c.endpoints) ? c.endpoints : [] };
-  } catch { return { endpoints: [] }; }
+    return {
+      endpoints: Array.isArray(c.endpoints) ? c.endpoints : [],
+      imageFallbackModels: Array.isArray(c.imageFallbackModels) ? c.imageFallbackModels : [],
+    };
+  } catch { return { endpoints: [], imageFallbackModels: [] }; }
 }
 async function loadStats(env) {
   try { const raw = await env.CONFIG_KV.get("stats"); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
@@ -183,22 +186,36 @@ export async function onRequestPost(context) {
   const cfg = await loadConfig(env);
   const stats = await loadStats(env);
   const updates = [];
-  const r = await callOpenAIImages(env, cfg, stats, model, openaiBody, updates);
+
+  // 尝试顺序：请求的图像模型 → imageFallbackModels（去重）
+  const tryList = [];
+  const seen = new Set();
+  for (const m of [model, ...(cfg.imageFallbackModels || [])]) { const mm = String(m || "").trim(); if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); } }
+
+  let r = null, anyCandidates = false, last = null, servedModelReq = model;
+  for (const m of tryList) {
+    const rr = await callOpenAIImages(env, cfg, stats, m, openaiBody, updates);
+    if (rr.none) continue;
+    anyCandidates = true;
+    if (rr.json) { r = rr; servedModelReq = m; break; }
+    last = rr.last;
+  }
   context.waitUntil(applyStats(env, updates));
 
-  if (r.none) return gj({ error: { code: 404, message: `没有列出图像模型「${model}」的可用站点`, status: "NOT_FOUND" } }, 404);
-  if (r.fail) {
-    let msg = r.last ? r.last.text : "所有候选站点均失败";
-    return gj({ error: { code: r.last ? r.last.status : 502, message: msg, status: "UNAVAILABLE" } }, r.last ? r.last.status : 502);
+  if (!anyCandidates) return gj({ error: { code: 404, message: `没有列出图像模型「${model}」或其兜底模型的可用站点`, status: "NOT_FOUND" } }, 404);
+  if (!r) {
+    let msg = last ? last.text : "所有候选站点（含兜底模型）均失败";
+    return gj({ error: { code: last ? last.status : 502, message: msg, status: "UNAVAILABLE" } }, last ? last.status : 502);
   }
 
   const images = await collectBase64(r.json);
   if (!images.length) return gj({ error: { message: "上游未返回图像数据" } }, 502);
 
+  const fbHeader = servedModelReq !== model ? { "X-Fallback-From": model } : {};
   // 转回 Gemini 形状
   if (action === "predict") {
     return new Response(JSON.stringify({ predictions: images.map((b64) => ({ bytesBase64Encoded: b64, mimeType: "image/png" })) }),
-      { status: 200, headers: { "Content-Type": "application/json", "X-Upstream": r.ep.baseUrl, "X-Served-Model": r.chosenModel } });
+      { status: 200, headers: { "Content-Type": "application/json", "X-Upstream": r.ep.baseUrl, "X-Served-Model": r.chosenModel, ...fbHeader } });
   }
   const out = {
     candidates: images.map((b64, i) => ({
@@ -208,6 +225,6 @@ export async function onRequestPost(context) {
     modelVersion: r.chosenModel,
   };
   return new Response(JSON.stringify(out), {
-    status: 200, headers: { "Content-Type": "application/json", "X-Upstream": r.ep.baseUrl, "X-Served-Model": r.chosenModel },
+    status: 200, headers: { "Content-Type": "application/json", "X-Upstream": r.ep.baseUrl, "X-Served-Model": r.chosenModel, ...fbHeader },
   });
 }

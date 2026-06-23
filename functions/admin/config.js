@@ -16,15 +16,16 @@ function adminOk(request, env) {
 async function loadConfig(env) {
   try {
     const raw = await env.CONFIG_KV.get("config");
-    if (!raw) return { endpoints: [], fallbackModels: [] };
+    if (!raw) return { endpoints: [], fallbackModels: [], imageFallbackModels: [] };
     const c = JSON.parse(raw);
     return {
       endpoints: Array.isArray(c.endpoints) ? c.endpoints : [],
       fallbackModels: Array.isArray(c.fallbackModels) ? c.fallbackModels : [],
+      imageFallbackModels: Array.isArray(c.imageFallbackModels) ? c.imageFallbackModels : [],
       syncSettings: (c.syncSettings && typeof c.syncSettings === "object") ? c.syncSettings : {},
     };
   } catch {
-    return { endpoints: [], fallbackModels: [], syncSettings: {} };
+    return { endpoints: [], fallbackModels: [], imageFallbackModels: [], syncSettings: {} };
   }
 }
 
@@ -70,6 +71,11 @@ export async function onRequestPut({ request, env }) {
     .map((m) => String(m).trim())
     .filter(Boolean);
 
+  // 图像兜底模型（按顺序尝试）：当请求的图像模型在所有列出它的站点都失败后，自动改用这些图像模型
+  const imageFallbackModels = (Array.isArray(body.imageFallbackModels) ? body.imageFallbackModels : [])
+    .map((m) => String(m).trim())
+    .filter(Boolean);
+
   // 模型列表同步设置（前端用浏览器定时器执行；这里仅持久化）
   const ss = (body.syncSettings && typeof body.syncSettings === "object") ? body.syncSettings : {};
   const num = (v, def, min, max) => {
@@ -92,6 +98,6 @@ export async function onRequestPut({ request, env }) {
     selfTestBatchSize: num(ss.selfTestBatchSize, 20, 5, 40),
   };
 
-  await env.CONFIG_KV.put("config", JSON.stringify({ endpoints: clean, fallbackModels, syncSettings }));
-  return j({ ok: true, endpoints: clean, fallbackModels, syncSettings });
+  await env.CONFIG_KV.put("config", JSON.stringify({ endpoints: clean, fallbackModels, imageFallbackModels, syncSettings }));
+  return j({ ok: true, endpoints: clean, fallbackModels, imageFallbackModels, syncSettings });
 }

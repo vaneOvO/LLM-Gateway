@@ -11,10 +11,13 @@ function j(data, status = 200) {
 async function loadConfig(env) {
   try {
     const raw = await env.CONFIG_KV.get("config");
-    if (!raw) return { endpoints: [] };
+    if (!raw) return { endpoints: [], imageFallbackModels: [] };
     const c = JSON.parse(raw);
-    return { endpoints: Array.isArray(c.endpoints) ? c.endpoints : [] };
-  } catch { return { endpoints: [] }; }
+    return {
+      endpoints: Array.isArray(c.endpoints) ? c.endpoints : [],
+      imageFallbackModels: Array.isArray(c.imageFallbackModels) ? c.imageFallbackModels : [],
+    };
+  } catch { return { endpoints: [], imageFallbackModels: [] }; }
 }
 async function loadStats(env) {
   try { const raw = await env.CONFIG_KV.get("stats"); return raw ? JSON.parse(raw) : {}; }
@@ -137,18 +140,29 @@ export async function onRequestPost(context) {
   const force = request.headers.get("X-Force-Upstream") || "";
   const updates = [];
 
-  const r = await tryImage(env, cfg, stats, model, body, updates, force);
+  // 尝试顺序：先请求的图像模型，再依次是 imageFallbackModels（去重）；钉死模式只试该模型本身
+  const tryList = [];
+  const seen = new Set();
+  const source = force ? [model] : [model, ...(cfg.imageFallbackModels || [])];
+  for (const m of source) { const mm = String(m || "").trim(); if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); } }
+
+  let served = null, anyCandidates = false, last = null;
+  for (const m of tryList) {
+    const r = await tryImage(env, cfg, stats, m, body, updates, force);
+    if (r.none) continue;                 // 没有站点列出这个图像模型 → 试下一个兜底
+    anyCandidates = true;
+    if (r.resp) { served = { resp: r.resp, ep: r.ep, chosenModel: r.chosenModel, model: m }; break; }
+    last = r.last;                         // 这个模型所有站点都失败 → 试下一个兜底
+  }
   context.waitUntil(applyStats(env, updates));
 
-  if (r.none) return j({ error: { message: `没有列出图像模型「${model}」的可用站点（请确认该模型在某站点的模型列表里且已填 key）` } }, 404);
-  if (r.fail) {
-    const status = r.last ? r.last.status : 502;
-    return new Response(r.last ? r.last.text : JSON.stringify({ error: { message: "所有候选站点均失败" } }), {
-      status, headers: { "Content-Type": "application/json" },
-    });
+  if (served) {
+    const headers = { "Content-Type": served.resp.ct, "X-Upstream": served.ep.baseUrl, "X-Served-Model": served.chosenModel };
+    if (served.model !== model) headers["X-Fallback-From"] = model;   // 发生了图像兜底
+    return new Response(served.resp.text, { status: served.resp.status, headers });
   }
-  return new Response(r.resp.text, {
-    status: r.resp.status,
-    headers: { "Content-Type": r.resp.ct, "X-Upstream": r.ep.baseUrl, "X-Served-Model": r.chosenModel },
+  if (!anyCandidates) return j({ error: { message: `没有列出图像模型「${model}」或其兜底模型的可用站点（请确认模型在某站点的模型列表里且已填 key）` } }, 404);
+  return new Response(last ? last.text : JSON.stringify({ error: { message: "所有候选站点（含兜底模型）均失败" } }), {
+    status: last ? last.status : 502, headers: { "Content-Type": "application/json" },
   });
 }

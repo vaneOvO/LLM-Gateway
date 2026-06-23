@@ -218,6 +218,11 @@
   .imp-name { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .imp-stat { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
   .imp-stat.ok { color: var(--ok); } .imp-stat.err { color: var(--danger-text); }
+  /* 图像调试结果 */
+  .img-card-out { border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); padding: 10px; max-width: 460px; }
+  .img-card-out img { width: 100%; border-radius: 10px; display: block; }
+  .img-meta { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-top: 8px; word-break: break-all; line-height: 1.5; }
+  .img-meta .ok { color: var(--ok); } .img-meta .fb { color: var(--warn); }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
@@ -263,6 +268,10 @@
     <div class="field" style="margin-top:14px;">
       <label>模型降级 / 兜底（每行一个，按顺序尝试；请求的模型整组上游都不可用时自动改用，避免断流。留空=不降级）</label>
       <textarea id="fallbackBox" placeholder="例如：&#10;gpt-oss-20b&#10;llama3.1-8b"></textarea>
+    </div>
+    <div class="field" style="margin-top:14px;">
+      <label>图像降级 / 兜底（每行一个图像模型，按顺序尝试；请求的图像模型在所有列出它的站点都失败后自动改用其它站点的这些图像模型。仅作用于 /v1/images/generations 与 Gemini 图像端点）</label>
+      <textarea id="imageFallbackBox" placeholder="例如：&#10;z-image-turbo&#10;grok-imagine-image-lite&#10;gpt-image-1"></textarea>
     </div>
   </section>
 
@@ -384,6 +393,42 @@
         <button class="mini ghost" id="tpRetryTemp">重测「暂不可用」</button>
       </div>
     </div>
+  </section>
+
+  <section class="card" id="imageTestCard">
+    <h2>图像调试</h2>
+    <div class="row" style="margin-bottom:12px;">
+      <div style="flex:1; min-width:180px;">
+        <label>图像模型（按模型名路由，挂了自动走「图像兜底」）</label>
+        <input id="imgModel" list="imgModelList" placeholder="gpt-image-2" />
+        <datalist id="imgModelList"></datalist>
+      </div>
+      <div style="flex:none; width:140px;">
+        <label>尺寸</label>
+        <select id="imgSize">
+          <option value="1024x1024">1024×1024</option>
+          <option value="1792x1024">1792×1024</option>
+          <option value="1024x1792">1024×1792</option>
+          <option value="">不指定</option>
+        </select>
+      </div>
+      <div style="flex:none; width:130px;">
+        <label>格式</label>
+        <select id="imgFormat">
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Gemini 原生</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>提示词</label>
+      <textarea id="imgPrompt" placeholder="a cute red apple on a wooden table">a cute red apple on a wooden table</textarea>
+    </div>
+    <div class="bar">
+      <button class="primary" id="imgGenBtn">生成图像</button>
+      <span class="ping-res" id="imgStatus"></span>
+    </div>
+    <div id="imgResult" style="display:none; margin-top:12px;"></div>
   </section>
 
 </div>
@@ -665,6 +710,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   -H "Content-Type: application/json" \\
   -d '{"contents":[{"parts":[{"text":"a cat"}]}]}'`;
     buildModelCatalog();
+    buildImageModelList();
   }
 
   let modelCatalog = [];
@@ -727,7 +773,8 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   // 当前配置体：所有 PUT 都用它，避免漏带 fallbackModels / syncSettings 把配置覆盖没了
   function configBody() {
     const fallbackModels = $("fallbackBox").value.split("\n").map((s) => s.trim()).filter(Boolean);
-    return JSON.stringify({ endpoints, fallbackModels, syncSettings: readSyncSettings() });
+    const imageFallbackModels = $("imageFallbackBox").value.split("\n").map((s) => s.trim()).filter(Boolean);
+    return JSON.stringify({ endpoints, fallbackModels, imageFallbackModels, syncSettings: readSyncSettings() });
   }
 
   // ===== 模型列表同步 =====
@@ -781,6 +828,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     if (!r.ok) throw new Error(data.error || r.status);
     endpoints = (data.endpoints || []).map((e) => ({ name: e.name || "", baseUrl: e.baseUrl || "", apiKeys: e.apiKeys || [], models: e.models || [] }));
     $("fallbackBox").value = (data.fallbackModels || []).join("\n");
+    $("imageFallbackBox").value = (data.imageFallbackModels || []).join("\n");
     applySyncSettings(data.syncSettings);
     setDirty(false);
     render();
@@ -858,6 +906,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
       if (!r.ok) throw new Error(data.error || r.status);
       endpoints = (data.endpoints || []).map((e) => ({ name: e.name || "", baseUrl: e.baseUrl || "", apiKeys: e.apiKeys || [], models: e.models || [] }));
       $("fallbackBox").value = (data.fallbackModels || []).join("\n");
+      $("imageFallbackBox").value = (data.imageFallbackModels || []).join("\n");
       applySyncSettings(data.syncSettings);
       await loadStats();
       setConn(true); setDirty(false); render();
@@ -1453,11 +1502,77 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     return { okN, failN, total: targets.length };
   }
 
+  // ===== 图像调试 =====
+  const IMG_MODEL_RX = /image|img|dall|flux|imagen|stable|sdxl|sd3|nano-banana|qwen-image|seedream|seededit|kolors|gpt-image|hunyuan-image|cogview|playground|recraft|ideogram|grok-imagine|z-image/i;
+  function buildImageModelList() {
+    const dl = $("imgModelList"); if (!dl) return;
+    const set = new Set();
+    endpoints.forEach((ep) => (ep.models || []).forEach((m) => { if (IMG_MODEL_RX.test(m)) set.add(m); }));
+    dl.innerHTML = [...set].map((m) => `<option value="${escapeAttr(m)}"></option>`).join("");
+    const inp = $("imgModel"); if (inp && !inp.value && set.size) inp.value = [...set][0];
+  }
+  async function generateImage() {
+    const key = $("proxyKey").value.trim();
+    if (!key) { $("proxyKey").focus(); return toast("先填 PROXY_API_KEY", "err"); }
+    const model = $("imgModel").value.trim();
+    if (!model) { $("imgModel").focus(); return toast("先填图像模型名", "err"); }
+    const prompt = $("imgPrompt").value.trim() || "a cute red apple on a wooden table";
+    const size = $("imgSize").value;
+    const fmt = $("imgFormat").value;
+    const btn = $("imgGenBtn"), st = $("imgStatus"), out = $("imgResult");
+    btn.disabled = true; st.className = "ping-res wait"; st.textContent = "生成中…（图像较慢，可能十几秒）"; out.style.display = "none"; out.innerHTML = "";
+    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 130000);
+    const t0 = Date.now();
+    try {
+      let url, opt;
+      if (fmt === "gemini") {
+        url = `/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        opt = { method: "POST", signal: ctrl.signal, headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) };
+      } else {
+        const b = { model, prompt, n: 1 }; if (size) b.size = size;
+        url = "/v1/images/generations";
+        opt = { method: "POST", signal: ctrl.signal, headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" }, body: JSON.stringify(b) };
+      }
+      const r = await fetch(url, opt);
+      clearTimeout(timer);
+      const ms = Date.now() - t0;
+      const text = await r.text();
+      let j = null; try { j = JSON.parse(text); } catch {}
+      let src = "";
+      if (fmt === "gemini") {
+        const parts = (j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+        const p = parts.find((x) => x.inlineData && x.inlineData.data);
+        if (p) src = "data:" + (p.inlineData.mimeType || "image/png") + ";base64," + p.inlineData.data;
+      } else {
+        const d = j && j.data && j.data[0];
+        if (d && d.b64_json) src = "data:image/png;base64," + d.b64_json;
+        else if (d && d.url) src = d.url;
+      }
+      const up = r.headers.get("X-Upstream") || "", served = r.headers.get("X-Served-Model") || "", fb = r.headers.get("X-Fallback-From") || "";
+      out.style.display = "block";
+      if (r.status < 400 && src) {
+        st.className = "ping-res ok"; st.textContent = `✓ ${ms}ms`;
+        out.innerHTML = `<div class="img-card-out"><img src="${src}" alt="generated"/><div class="img-meta"><span class="ok">✓ ${fmt === "gemini" ? "Gemini" : "OpenAI"}</span> · ${ms}ms${up ? (" · 上游 " + escapeHtml(up.replace(/^https?:\/\//, ""))) : ""}${served ? (" · 实际模型 " + escapeHtml(served)) : ""}${fb ? ` · <span class="fb">兜底来源 ${escapeHtml(fb)}</span>` : ""}</div></div>`;
+      } else {
+        st.className = "ping-res err"; st.textContent = `✗ HTTP ${r.status}`;
+        out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">✗ 没出图（HTTP ${r.status}）：${escapeHtml(text.slice(0, 300))}</div></div>`;
+      }
+    } catch (e) {
+      clearTimeout(timer);
+      st.className = "ping-res err"; st.textContent = "✗ " + (e.name === "AbortError" ? "超时(130s)" : (e.message || e));
+      out.style.display = "block";
+      out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">✗ ${escapeHtml(e.name === "AbortError" ? "请求超时（130s）" : (e.message || String(e)))}</div></div>`;
+    }
+    btn.disabled = false;
+  }
+
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
   function escapeAttr(s) { return String(s == null ? "" : s).replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
   $("connectBtn").addEventListener("click", connect);
   $("fallbackBox").addEventListener("input", () => setDirty(true));
+  $("imageFallbackBox").addEventListener("input", () => setDirty(true));
+  $("imgGenBtn").addEventListener("click", generateImage);
   $("syncToggle").addEventListener("click", () => { syncEnabled = !syncEnabled; updateSyncToggleUI(); setDirty(true); applyScheduler(); });
   $("syncAutoTest").addEventListener("click", () => { syncAutoTest = !syncAutoTest; updateSyncToggleUI(); setDirty(true); });
   $("syncNowBtn").addEventListener("click", () => runServerSync(false));

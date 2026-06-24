@@ -73,6 +73,8 @@
   button.ghost { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
   button.ghost:hover { background: rgba(255,255,255,.06); }
   button.mini { padding: 6px 11px; font-size: 12px; font-family: var(--mono); border-radius: 9px; }
+  button.danger-solid { background: linear-gradient(180deg, #fb7185, #e11d48); color: #fff; border-color: transparent; box-shadow: 0 6px 18px rgba(225,29,72,.28), inset 0 1px 0 rgba(255,255,255,.3); }
+  button.danger-solid:hover { background: linear-gradient(180deg, #fda4af, #f43f5e); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(225,29,72,.36), inset 0 1px 0 rgba(255,255,255,.4); }
   button.link { background: none; border: none; color: var(--danger-text); padding: 6px 8px; }
   button.link:hover { background: var(--danger); }
   button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
@@ -136,6 +138,7 @@
   .combo-item .upstreams { font-size: 11px; color: var(--faint); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .combo-badge { flex: none; font-size: 11px; color: var(--accent); background: var(--ok-soft); border: 1px solid var(--ok-line); border-radius: 999px; padding: 1px 8px; font-weight: 700; }
   .combo-none { padding: 16px 10px; color: var(--faint); font-size: 12.5px; font-family: var(--mono); text-align: center; }
+  .combo-note { padding: 7px 10px; color: var(--muted); font-size: 11px; font-family: var(--mono); line-height: 1.4; border-bottom: 1px solid var(--line-soft); margin-bottom: 4px; }
 
   /* 图标按钮 */
   .btn-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); background-color: transparent; border-radius: 11px; cursor: pointer; transition: all .18s var(--ease); }
@@ -375,7 +378,7 @@
       <div class="tp-head">
         <span class="ttl" id="tpTitle">测活结果</span>
         <span class="spacer"></span>
-        <button class="mini ghost" id="tpStop" style="display:none; color:var(--danger-text); border-color:var(--danger-line);">停止</button>
+        <button class="mini danger-solid" id="tpStop" style="display:none;">■ 停止</button>
         <button class="mini ghost" id="tpExport">导出</button>
         <button class="mini ghost" id="tpClose">关闭</button>
       </div>
@@ -1090,7 +1093,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     $("testPanel").style.display = "block";
     $("tpTitle").textContent = title;
     $("tpActions").style.display = "none";
-    const stop = $("tpStop"); if (stop) { stop.style.display = "inline-block"; stop.disabled = false; stop.textContent = "停止"; }
+    const stop = $("tpStop"); if (stop) { stop.style.display = "inline-block"; stop.disabled = false; stop.textContent = "■ 停止"; }
     $("tpDeleteGone").disabled = false; $("tpRetryTemp").disabled = false;
     $("tpBarFill").style.width = "0%";
     $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === "all"));
@@ -1168,6 +1171,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     if (imageModels.length) $("imageFallbackBox").value = imageModels.join("\n");
     setDirty(true);
     await save();
+    buildImageModelList();
     toast(`已设兜底：聊天 ${chatModels.length} · 图像 ${imageModels.length}`, "ok");
   }
   // 重测某个模型：把它在所有相关站点上的 (站点,模型) 对都重测一遍
@@ -1522,7 +1526,9 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   // ===== 图像调试 =====
   const IMG_MODEL_RX = /image|img|dall|flux|imagen|stable|sdxl|sd3|nano-banana|qwen-image|seedream|seededit|kolors|gpt-image|hunyuan-image|cogview|playground|recraft|ideogram|grok-imagine|z-image/i;
   let imgModelCatalog = [];
+  let imgFallbackMode = false;
   function buildImageModelList() {
+    // 统计每个图像模型由哪些站点提供（用于标注）
     const providers = {};
     endpoints.forEach((ep) => {
       const up = ep.name || "未命名";
@@ -1532,21 +1538,28 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
         if (!providers[mm].includes(up)) providers[mm].push(up);
       });
     });
-    imgModelCatalog = Object.keys(providers).sort().map((model) => ({ model, count: providers[model].length, upstreams: providers[model] }));
+    // 若设了「图像兜底」(=测活筛出的可用图像模型，已按延迟排序)，下拉只显示这些；否则暂列全部图像模型
+    const fb = (($("imageFallbackBox") || {}).value || "").split("\n").map((s) => s.trim()).filter(Boolean);
+    imgFallbackMode = fb.length > 0;
+    const models = imgFallbackMode ? fb : Object.keys(providers).sort();
+    imgModelCatalog = models.map((model) => ({ model, count: (providers[model] || []).length, upstreams: providers[model] || [] }));
     imgSyncClear();
     renderImgMenu($("imgModel").value.trim());
-    const inp = $("imgModel"); if (inp && !inp.value && imgModelCatalog.length) inp.value = imgModelCatalog[0].model, imgSyncClear();
+    const inp = $("imgModel"); if (inp && !inp.value && imgModelCatalog.length) { inp.value = imgModelCatalog[0].model; imgSyncClear(); }
   }
   function imgSyncClear() { $("imgModelCombo").classList.toggle("has-val", !!$("imgModel").value.trim()); }
   function renderImgMenu(filter) {
     const menu = $("imgModelMenu");
     const q = (filter || "").toLowerCase();
     const items = imgModelCatalog.filter((x) => x.model.toLowerCase().includes(q));
+    const note = imgFallbackMode
+      ? `<div class="combo-note">仅显示「图像兜底」中测活可用的模型（${imgModelCatalog.length}）· 也可直接输入其它模型名</div>`
+      : (imgModelCatalog.length ? `<div class="combo-note">暂列全部图像模型；跑测活并点「设为兜底池」后，这里只显示可用的</div>` : "");
     if (!items.length) {
-      menu.innerHTML = `<div class="combo-none">${imgModelCatalog.length ? "没有匹配的图像模型" : "站点里没有图像模型（先在上游拉取/填写含 image / dall / flux / imagen / gpt-image 等的模型名）"}</div>`;
+      menu.innerHTML = note + `<div class="combo-none">${imgModelCatalog.length ? "没有匹配的图像模型" : "站点里没有图像模型，且未设图像兜底"}</div>`;
       return;
     }
-    menu.innerHTML = items
+    menu.innerHTML = note + items
       .map((x) => `<div class="combo-item" data-m="${escapeAttr(x.model)}">
           <div style="display:flex; flex-direction:column; overflow:hidden;">
             <span class="nm">${escapeHtml(x.model)}</span>
@@ -1575,7 +1588,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     const size = $("imgSize").value;
     const fmt = $("imgFormat").value;
     const btn = $("imgGenBtn"), st = $("imgStatus"), out = $("imgResult");
-    btn.textContent = "停止"; btn.style.background = "linear-gradient(180deg,#fb7185,#e11d48)"; btn.style.borderColor = "transparent";
+    btn.textContent = "■ 停止"; btn.classList.add("danger-solid");
     st.className = "ping-res wait"; st.textContent = "生成中…（图像较慢，可能十几秒，可点「停止」中止）"; out.style.display = "none"; out.innerHTML = "";
     const ctrl = new AbortController(); imgCtrl = ctrl; imgStopped = false;
     const timer = setTimeout(() => ctrl.abort(), 130000);
@@ -1620,7 +1633,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
       out.style.display = "block";
       out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">${stopped ? "⏹ 已手动停止" : ("✗ " + escapeHtml(e.name === "AbortError" ? "请求超时（130s）" : (e.message || String(e))))}</div></div>`;
     } finally {
-      clearTimeout(timer); imgCtrl = null; btn.textContent = "生成图像"; btn.style.background = ""; btn.style.borderColor = "";
+      clearTimeout(timer); imgCtrl = null; btn.textContent = "生成图像"; btn.classList.remove("danger-solid");
     }
   }
 
@@ -1629,7 +1642,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
 
   $("connectBtn").addEventListener("click", connect);
   $("fallbackBox").addEventListener("input", () => setDirty(true));
-  $("imageFallbackBox").addEventListener("input", () => setDirty(true));
+  $("imageFallbackBox").addEventListener("input", () => { setDirty(true); buildImageModelList(); });
   $("imgGenBtn").addEventListener("click", imgGenClick);
   $("syncToggle").addEventListener("click", () => { syncEnabled = !syncEnabled; updateSyncToggleUI(); setDirty(true); applyScheduler(); });
   $("syncAutoTest").addEventListener("click", () => { syncAutoTest = !syncAutoTest; updateSyncToggleUI(); setDirty(true); });

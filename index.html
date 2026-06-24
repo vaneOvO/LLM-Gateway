@@ -231,6 +231,43 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
   }
+
+  /* ===== 手机端适配（窄屏 ≤600px：多列堆叠、内边距收紧、触摸友好） ===== */
+  @media (max-width: 600px) {
+    .wrap { padding: 16px 12px 72px; }
+    header.top { gap: 8px; padding-bottom: 12px; }
+    header.top h1 { font-size: 17px; }
+    header.top .sub { font-size: 11px; word-break: break-all; }
+    .card { padding: 14px; border-radius: 18px; margin-top: 12px; }
+    .card > h2 { font-size: 11px; letter-spacing: 1.2px; }
+
+    /* 多列 .row 在窄屏堆叠为单列（含内联固定宽度的 尺寸/格式/并发 等），按钮整行 */
+    .row { gap: 8px; }
+    .row > div { flex: 1 1 100% !important; min-width: 0 !important; width: auto !important; }
+    .row > button { flex: 1 1 100% !important; }
+
+    /* 工具栏/操作按钮更紧凑、可换行 */
+    .toolbar { gap: 6px; }
+    .toolbar button, .bar button { padding: 8px 12px; font-size: 12px; }
+
+    /* 站点行：隐藏拖拽手柄、缩短站点名给 URL 让位 */
+    .drag-handle { display: none; }
+    .ep-row { gap: 8px; padding: 11px 12px; }
+    .ep-row .nm { max-width: 92px; }
+    .ep-row .meta { font-size: 11px; }
+
+    /* 测活结果项：把"站点·延迟"信息换到第二行，避免被压成省略号 */
+    .tp-item { flex-wrap: wrap; }
+    .tp-item .info { flex-basis: 100%; max-width: 100%; white-space: normal; word-break: break-word; margin-left: 30px; }
+    .tp-list { max-height: 52vh; }
+    .tp-head { font-size: 12px; gap: 8px; padding: 10px 12px; }
+
+    /* 下拉菜单/导入框/图像结果/代码块适配窄屏 */
+    .combo-menu { max-height: 52vh; }
+    .modal-overlay { padding: 40px 10px; }
+    .img-card-out { max-width: 100%; }
+    pre { font-size: 11.5px; padding: 10px 12px; }
+  }
 </style>
 </head>
 <body>

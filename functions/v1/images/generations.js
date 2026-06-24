@@ -8,6 +8,16 @@
 function j(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
+// 把上游错误体清洗成简洁 JSON：JSON 原样；HTML/纯文本(如 Cloudflare 524 页)去标签压空白截断，附状态提示
+function cleanErr(status, text) {
+  const t = (text || "").trim();
+  if (t.startsWith("{") || t.startsWith("[")) { try { JSON.parse(t); return t; } catch {} }
+  const snippet = t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+  const hint = (status === 524 || status === 504 || status === 522) ? "上游超时（该模型在上游可能不可用或过慢）"
+    : status === 404 ? "上游称该模型不存在"
+    : status >= 500 ? "上游服务错误" : "上游返回错误";
+  return JSON.stringify({ error: { message: hint + "（HTTP " + status + "）" + (snippet ? "：" + snippet : ""), type: "upstream_error", code: status } });
+}
 async function loadConfig(env) {
   try {
     const raw = await env.CONFIG_KV.get("config");
@@ -85,7 +95,7 @@ async function applyStats(env, updates) {
   } catch {}
 }
 
-const IMG_TIMEOUT = 120000;
+const IMG_TIMEOUT = 60000;
 
 // 试某个模型在所有候选站点上的图像生成；成功（HTTP<400）即返回 {resp, ep}
 async function tryImage(env, cfg, stats, model, body, updates, force) {
@@ -114,7 +124,7 @@ async function tryImage(env, cfg, stats, model, body, updates, force) {
         return { resp: { status: r.status, text, ct: r.headers.get("content-type") || "application/json" }, ep, chosenModel };
       }
       updates.push({ baseUrl: ep.baseUrl, ok: false, lat, down: r.status >= 500 || r.status === 429 });
-      last = { status: r.status, text };
+      last = { status: r.status, text: cleanErr(r.status, text) };
     } catch (e) {
       clearTimeout(t);
       updates.push({ baseUrl: ep.baseUrl, ok: false, lat: Date.now() - start, down: true });

@@ -8,6 +8,15 @@
 function gj(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
+// 上游错误清洗成简洁消息串：JSON 取 error.message；HTML/纯文本去标签压缩截断
+function cleanErrMsg(status, text) {
+  const t = (text || "").trim();
+  if (t.startsWith("{")) { try { const o = JSON.parse(t); if (o && o.error) return (o.error.message || JSON.stringify(o.error)); } catch {} }
+  const snippet = t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140);
+  const hint = (status === 524 || status === 504 || status === 522) ? "上游超时（该模型在上游可能不可用或过慢）"
+    : status === 404 ? "上游称该模型不存在" : status >= 500 ? "上游服务错误" : "上游返回错误";
+  return hint + "（HTTP " + status + "）" + (snippet ? "：" + snippet : "");
+}
 async function loadConfig(env) {
   try {
     const raw = await env.CONFIG_KV.get("config");
@@ -75,7 +84,7 @@ async function applyStats(env, updates) {
     await env.CONFIG_KV.put("stats", JSON.stringify(s));
   } catch {}
 }
-const IMG_TIMEOUT = 120000;
+const IMG_TIMEOUT = 60000;
 
 // 调上游 OpenAI 图像端点，含多站点故障转移；成功返回解析后的 OpenAI JSON
 async function callOpenAIImages(env, cfg, stats, model, openaiBody, updates) {
@@ -104,7 +113,7 @@ async function callOpenAIImages(env, cfg, stats, model, openaiBody, updates) {
         return { ep, chosenModel, json };
       }
       updates.push({ baseUrl: ep.baseUrl, ok: false, lat, down: r.status >= 500 || r.status === 429 });
-      last = { status: r.status, text };
+      last = { status: r.status, text: cleanErrMsg(r.status, text) };
     } catch (e) {
       clearTimeout(t);
       updates.push({ baseUrl: ep.baseUrl, ok: false, lat: Date.now() - start, down: true });

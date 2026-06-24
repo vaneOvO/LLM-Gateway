@@ -1628,7 +1628,13 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
         out.innerHTML = `<div class="img-card-out"><img src="${src}" alt="generated"/><div class="img-meta"><span class="ok">✓ ${fmt === "gemini" ? "Gemini" : "OpenAI"}</span> · ${ms}ms${up ? (" · 上游 " + escapeHtml(up.replace(/^https?:\/\//, ""))) : ""}${served ? (" · 实际模型 " + escapeHtml(served)) : ""}${fb ? ` · <span class="fb">兜底来源 ${escapeHtml(fb)}</span>` : ""}</div></div>`;
       } else {
         st.className = "ping-res err"; st.textContent = `✗ HTTP ${r.status}`;
-        out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">✗ 没出图（HTTP ${r.status}）：${escapeHtml(text.slice(0, 300))}</div></div>`;
+        let msg = "";
+        if (j && j.error) msg = j.error.message || (typeof j.error === "string" ? j.error : JSON.stringify(j.error));
+        if (!msg) {
+          const looksHtml = /^\s*</.test(text) || /<html/i.test(text);
+          msg = looksHtml ? "上游返回了 HTML 错误页（通常是超时/网关错误，如 524）" : (text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200) || "未知错误");
+        }
+        out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">✗ 没出图（HTTP ${r.status}）：${escapeHtml(String(msg).slice(0, 240))}</div></div>`;
       }
     } catch (e) {
       const stopped = imgStopped;

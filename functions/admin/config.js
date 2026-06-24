@@ -98,6 +98,11 @@ export async function onRequestPut({ request, env }) {
     selfTestBatchSize: num(ss.selfTestBatchSize, 20, 5, 40),
   };
 
-  await env.CONFIG_KV.put("config", JSON.stringify({ endpoints: clean, fallbackModels, imageFallbackModels, syncSettings }));
+  try {
+    await env.CONFIG_KV.put("config", JSON.stringify({ endpoints: clean, fallbackModels, imageFallbackModels, syncSettings }));
+  } catch (e) {
+    // 最常见：免费版 KV 每日写入配额(1000/天)用尽，或对同一 key 写入过于频繁(1次/秒)。配额每日 00:00 UTC 重置；升级 Workers Paid 可大幅提高。
+    return j({ error: "保存失败：写入 KV 出错（很可能是免费版每日写入额度已用尽，或写入过于频繁）。可稍后重试，或升级 Cloudflare Workers 付费版。原始信息：" + String(e).slice(0, 160) }, 500);
+  }
   return j({ ok: true, endpoints: clean, fallbackModels, imageFallbackModels, syncSettings });
 }

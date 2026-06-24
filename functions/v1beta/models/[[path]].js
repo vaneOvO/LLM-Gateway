@@ -69,6 +69,8 @@ function orderCandidates(cands, stats) {
 }
 async function applyStats(env, updates) {
   if (!updates.length) return;
+  const hasFailure = updates.some((u) => u.down);
+  if (!hasFailure && Math.random() > 0.08) return; // 抽样写，省 KV 写入额度
   try {
     const raw = await env.CONFIG_KV.get("stats");
     const s = raw ? JSON.parse(raw) : {};

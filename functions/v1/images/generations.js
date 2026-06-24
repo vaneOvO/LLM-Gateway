@@ -77,8 +77,11 @@ function orderCandidates(cands, stats) {
   const tail = healthy.length ? cold : [];
   return [first, ...rest, ...tail].map((a) => a.ep);
 }
-async function applyStats(env, updates) {
+async function applyStats(env, updates, opts) {
   if (!updates.length) return;
+  if (opts && opts.forced) return; // 测活/钉死不写
+  const hasFailure = updates.some((u) => u.down);
+  if (!hasFailure && Math.random() > 0.08) return; // 普通请求抽样写，省 KV 写入额度
   try {
     const raw = await env.CONFIG_KV.get("stats");
     const s = raw ? JSON.parse(raw) : {};
@@ -164,7 +167,7 @@ export async function onRequestPost(context) {
     if (r.resp) { served = { resp: r.resp, ep: r.ep, chosenModel: r.chosenModel, model: m }; break; }
     last = r.last;                         // 这个模型所有站点都失败 → 试下一个兜底
   }
-  context.waitUntil(applyStats(env, updates));
+  context.waitUntil(applyStats(env, updates, { forced: !!force }));
 
   if (served) {
     const headers = { "Content-Type": served.resp.ct, "X-Upstream": served.ep.baseUrl, "X-Served-Model": served.chosenModel };

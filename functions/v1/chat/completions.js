@@ -60,8 +60,13 @@ function orderCandidates(cands, stats) {
   return [first, ...rest, ...tail].map((a) => a.ep);
 }
 
-async function applyStats(env, updates) {
+async function applyStats(env, updates, opts) {
   if (!updates.length) return;
+  // 钉死/测活请求(force)不写 stats：既避免污染真实延迟，又省 KV 写入配额（测活是写入大头）
+  if (opts && opts.forced) return;
+  // 普通请求：仅在“有失败需记录冷却”或抽样命中(~8%)时才写，避免每请求一写撑爆免费版每日写入额度
+  const hasFailure = updates.some((u) => u.down);
+  if (!hasFailure && Math.random() > 0.08) return;
   try {
     const raw = await env.CONFIG_KV.get("stats");
     const s = raw ? JSON.parse(raw) : {};
@@ -168,7 +173,7 @@ export async function onRequestPost(context) {
   for (const m of tryList) {
     const r = await tryModel(env, cfg, stats, m, body, updates, force);
     if (r.ok) {
-      context.waitUntil(applyStats(env, updates));
+      context.waitUntil(applyStats(env, updates, { forced: !!force }));
       const headers = new Headers();
       const ct = r.resp.headers.get("Content-Type"); if (ct) headers.set("Content-Type", ct);
       headers.set("X-Upstream", r.ep.baseUrl);
@@ -180,7 +185,7 @@ export async function onRequestPost(context) {
   }
 
   // 全部（含兜底）都失败
-  context.waitUntil(applyStats(env, updates));
+  context.waitUntil(applyStats(env, updates, { forced: !!force }));
   if (lastResp) {
     const headers = new Headers();
     const ct = lastResp.headers.get("Content-Type"); if (ct) headers.set("Content-Type", ct);

@@ -268,6 +268,11 @@
     .img-card-out { max-width: 100%; }
     pre { font-size: 11.5px; padding: 10px 12px; }
   }
+
+  /* 触摸设备：表单控件字号 ≥16px，阻止 iOS Safari 聚焦输入框时自动放大视图（仍保留双指缩放） */
+  @media (pointer: coarse) {
+    input, textarea, select { font-size: 16px; }
+  }
 </style>
 </head>
 <body>

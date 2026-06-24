@@ -73,8 +73,9 @@
   button.ghost { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
   button.ghost:hover { background: rgba(255,255,255,.06); }
   button.mini { padding: 6px 11px; font-size: 12px; font-family: var(--mono); border-radius: 9px; }
-  button.danger-solid { background: linear-gradient(180deg, #fb7185, #e11d48); color: #fff; border-color: transparent; box-shadow: 0 6px 18px rgba(225,29,72,.28), inset 0 1px 0 rgba(255,255,255,.3); }
-  button.danger-solid:hover { background: linear-gradient(180deg, #fda4af, #f43f5e); transform: translateY(-1px); box-shadow: 0 8px 22px rgba(225,29,72,.36), inset 0 1px 0 rgba(255,255,255,.4); }
+  .btn-stop { color: var(--danger-text); border-color: var(--danger-line); }
+  .btn-stop:hover { background-color: var(--danger); border-color: var(--danger-text); transform: scale(1.04); }
+  .btn-stop:active { transform: scale(0.94); }
   button.link { background: none; border: none; color: var(--danger-text); padding: 6px 8px; }
   button.link:hover { background: var(--danger); }
   button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
@@ -378,7 +379,9 @@
       <div class="tp-head">
         <span class="ttl" id="tpTitle">测活结果</span>
         <span class="spacer"></span>
-        <button class="mini danger-solid" id="tpStop" style="display:none;">■ 停止</button>
+        <button class="btn-icon btn-stop" id="tpStop" title="停止测活" style="display:none;">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"></rect></svg>
+        </button>
         <button class="mini ghost" id="tpExport">导出</button>
         <button class="mini ghost" id="tpClose">关闭</button>
       </div>
@@ -434,6 +437,9 @@
     </div>
     <div class="bar">
       <button class="primary" id="imgGenBtn">生成图像</button>
+      <button class="btn-icon btn-stop" id="imgStopBtn" title="停止生成" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"></rect></svg>
+      </button>
       <span class="ping-res" id="imgStatus"></span>
     </div>
     <div id="imgResult" style="display:none; margin-top:12px;"></div>
@@ -1093,7 +1099,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     $("testPanel").style.display = "block";
     $("tpTitle").textContent = title;
     $("tpActions").style.display = "none";
-    const stop = $("tpStop"); if (stop) { stop.style.display = "inline-block"; stop.disabled = false; stop.textContent = "■ 停止"; }
+    const stop = $("tpStop"); if (stop) { stop.style.display = "inline-flex"; stop.disabled = false; stop.title = "停止测活"; }
     $("tpDeleteGone").disabled = false; $("tpRetryTemp").disabled = false;
     $("tpBarFill").style.width = "0%";
     $("tpFilters").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.flt === "all"));
@@ -1575,10 +1581,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   function openImgMenu() { renderImgMenu($("imgModel").value.trim()); $("imgModelMenu").classList.add("open"); $("imgModelCombo").classList.add("open"); }
   function closeImgMenu() { $("imgModelMenu").classList.remove("open"); $("imgModelCombo").classList.remove("open"); }
   let imgCtrl = null, imgStopped = false;
-  function imgGenClick() {
-    if (imgCtrl) { imgStopped = true; try { imgCtrl.abort(); } catch {} return; } // 正在生成 → 停止
-    generateImage();
-  }
+  function imgStop() { if (imgCtrl) { imgStopped = true; try { imgCtrl.abort(); } catch {} } }
   async function generateImage() {
     const key = $("proxyKey").value.trim();
     if (!key) { $("proxyKey").focus(); return toast("先填 PROXY_API_KEY", "err"); }
@@ -1587,9 +1590,9 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     const prompt = $("imgPrompt").value.trim() || "a cute red apple on a wooden table";
     const size = $("imgSize").value;
     const fmt = $("imgFormat").value;
-    const btn = $("imgGenBtn"), st = $("imgStatus"), out = $("imgResult");
-    btn.textContent = "■ 停止"; btn.classList.add("danger-solid");
-    st.className = "ping-res wait"; st.textContent = "生成中…（图像较慢，可能十几秒，可点「停止」中止）"; out.style.display = "none"; out.innerHTML = "";
+    const btn = $("imgGenBtn"), stopBtn = $("imgStopBtn"), st = $("imgStatus"), out = $("imgResult");
+    btn.disabled = true; stopBtn.style.display = "inline-flex"; stopBtn.disabled = false; stopBtn.title = "停止生成";
+    st.className = "ping-res wait"; st.textContent = "生成中…（图像较慢，可能十几秒，可点右侧停止）"; out.style.display = "none"; out.innerHTML = "";
     const ctrl = new AbortController(); imgCtrl = ctrl; imgStopped = false;
     const timer = setTimeout(() => ctrl.abort(), 130000);
     const t0 = Date.now();
@@ -1633,7 +1636,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
       out.style.display = "block";
       out.innerHTML = `<div class="img-card-out"><div class="img-meta" style="color:var(--danger-text)">${stopped ? "⏹ 已手动停止" : ("✗ " + escapeHtml(e.name === "AbortError" ? "请求超时（130s）" : (e.message || String(e))))}</div></div>`;
     } finally {
-      clearTimeout(timer); imgCtrl = null; btn.textContent = "生成图像"; btn.classList.remove("danger-solid");
+      clearTimeout(timer); imgCtrl = null; btn.disabled = false; stopBtn.style.display = "none";
     }
   }
 
@@ -1643,7 +1646,8 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   $("connectBtn").addEventListener("click", connect);
   $("fallbackBox").addEventListener("input", () => setDirty(true));
   $("imageFallbackBox").addEventListener("input", () => { setDirty(true); buildImageModelList(); });
-  $("imgGenBtn").addEventListener("click", imgGenClick);
+  $("imgGenBtn").addEventListener("click", generateImage);
+  $("imgStopBtn").addEventListener("click", imgStop);
   $("syncToggle").addEventListener("click", () => { syncEnabled = !syncEnabled; updateSyncToggleUI(); setDirty(true); applyScheduler(); });
   $("syncAutoTest").addEventListener("click", () => { syncAutoTest = !syncAutoTest; updateSyncToggleUI(); setDirty(true); });
   $("syncNowBtn").addEventListener("click", () => runServerSync(false));
@@ -1698,7 +1702,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
 
   // 测活结果面板
   $("tpClose").addEventListener("click", () => { $("testPanel").style.display = "none"; });
-  $("tpStop").addEventListener("click", () => { tpAborted = true; $("tpStop").textContent = "停止中…"; $("tpStop").disabled = true; });
+  $("tpStop").addEventListener("click", () => { tpAborted = true; $("tpStop").disabled = true; $("tpStop").title = "停止中…"; });
   $("tpExport").addEventListener("click", tpExportResults);
   $("tpDeleteGone").addEventListener("click", applyDeleteGone);
   $("tpRetryTemp").addEventListener("click", tpRetryTempModels);

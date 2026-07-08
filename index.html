@@ -372,7 +372,10 @@
   <section class="card" id="recentCard">
     <div class="recent-head">
       <h2 style="margin:0;">最近调用</h2>
-      <button class="mini ghost" id="refreshRecentBtn">刷新</button>
+      <div style="display:flex; gap:8px;">
+        <button class="mini ghost" id="clearRecentBtn">清空</button>
+        <button class="mini ghost" id="refreshRecentBtn">刷新</button>
+      </div>
     </div>
     <div class="hint" style="margin:-4px 0 10px;">最近 20 次真实调用命中的实际模型、上游与时间（测活不计）。</div>
     <div id="recentBox" class="recent-list"><div class="recent-empty">还没有记录。发起一次调用后，这里会显示实际命中的模型、上游与时间。</div></div>
@@ -439,6 +442,7 @@
     </div>
     <div class="bar">
       <button class="primary" id="testBtn">发送 / 测试选中模型</button>
+      <button class="mini ghost" id="clearTestBtn" style="display:none;">清空输出</button>
       <span class="spacer"></span>
     </div>
     <pre id="testOut" style="display:none;"></pre>
@@ -1392,6 +1396,7 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     if (!model) return toast("填模型名", "err");
     LS.p = key;
     const out = $("testOut"); out.style.display = "block"; out.textContent = "连接中…（流式）";
+    $("clearTestBtn").style.display = "";
     const btn = $("testBtn");
     testCtrl = new AbortController();
     btn.textContent = "停止";
@@ -1857,6 +1862,19 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   });
   $("refreshStatsBtn").addEventListener("click", refreshStats);
   $("refreshRecentBtn").addEventListener("click", () => { loadStats(); });
+  $("clearRecentBtn").addEventListener("click", async () => {
+    if (!connected) return toast("先连接控制台", "err");
+    try {
+      const r = await fetch("/admin/stats?target=recent", { method: "DELETE", headers: adminHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      recentCalls = []; renderRecent(); toast("最近调用已清空", "ok");
+    } catch (e) { toast("清空失败：" + e.message, "err"); }
+  });
+  $("clearTestBtn").addEventListener("click", () => {
+    if (testCtrl) { try { testCtrl.abort(); } catch {} testCtrl = null; $("testBtn").textContent = "发送 / 测试选中模型"; }
+    const out = $("testOut"); out.textContent = ""; out.style.display = "none";
+    $("clearTestBtn").style.display = "none";
+  });
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);
   $("globalTestBtn").addEventListener("click", testAllModelsGlobally);

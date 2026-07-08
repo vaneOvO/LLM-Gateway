@@ -28,6 +28,17 @@ export async function onRequestGet({ request, env }) {
 
 export async function onRequestDelete({ request, env }) {
   if (!adminOk(request, env)) return j({ error: "管理员令牌无效" }, 401);
+  const url = new URL(request.url);
+  if (url.searchParams.get("target") === "recent") {
+    // 只清“最近调用”，保留按站点的计数
+    try {
+      const raw = await env.CONFIG_KV.get("stats");
+      const s = raw ? JSON.parse(raw) : {};
+      delete s.__recent;
+      await env.CONFIG_KV.put("stats", JSON.stringify(s));
+    } catch {}
+    return j({ ok: true, cleared: "recent" });
+  }
   await env.CONFIG_KV.put("stats", "{}");
   return j({ ok: true });
 }

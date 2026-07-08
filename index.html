@@ -1092,7 +1092,8 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
       const d = await r.json();
       if (!d.models || !d.models.length) {
         res.className = "ping-res err";
-        res.textContent = d.status ? `✗ ${d.status}：没拿到模型列表` : `✗ ${d.error || "没拿到模型列表"}`;
+        const base = d.status ? `✗ ${d.status}：没拿到模型列表` : `✗ ${d.error || "没拿到模型列表"}`;
+        res.textContent = d.hint ? `${base}｜${d.hint}` : base;
         return;
       }
       endpoints[idx].models = d.models;

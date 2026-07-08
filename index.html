@@ -1381,24 +1381,74 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     tpFinish();
   }
 
+  let testCtrl = null;
   async function test() {
+    // 正在流式时，再次点击 = 停止
+    if (testCtrl) { try { testCtrl.abort(); } catch {} testCtrl = null; $("testBtn").textContent = "发送 / 测试选中模型"; return; }
     const key = $("proxyKey").value.trim();
     const model = $("testModel").value.trim();
     const msg = $("testMsg").value;
     if (!key) return toast("填 PROXY_API_KEY", "err");
     if (!model) return toast("填模型名", "err");
     LS.p = key;
-    const out = $("testOut"); out.style.display = "block"; out.textContent = "请求中…";
+    const out = $("testOut"); out.style.display = "block"; out.textContent = "连接中…（流式）";
+    const btn = $("testBtn");
+    testCtrl = new AbortController();
+    btn.textContent = "停止";
     try {
       const r = await fetch("/v1/chat/completions", {
-        method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: msg }], stream: false }),
+        method: "POST",
+        headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: msg }], stream: true }),
+        signal: testCtrl.signal,
       });
-      const data = await r.json();
-      if (!r.ok) { out.textContent = "HTTP " + r.status + "\n" + JSON.stringify(data, null, 2); return; }
-      const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-      out.textContent = content != null ? content : JSON.stringify(data, null, 2);
-    } catch (err) { out.textContent = "请求出错：" + err.message; }
+      // 元信息：实际命中的上游/模型/是否降级
+      const served = r.headers.get("X-Served-Model"), up = r.headers.get("X-Upstream"), fb = r.headers.get("X-Fallback-From");
+      const meta = [served && ("模型 " + served), up && ("上游 " + up), fb && ("⚠兜底自 " + fb)].filter(Boolean).join("  ·  ");
+      const head = meta ? meta + "\n" + "─".repeat(Math.min(meta.length, 48)) + "\n\n" : "";
+      if (!r.ok || !r.body) {
+        // 错误：读文本，能解析成 JSON 就美化，HTML(如超时页)则截断展示
+        const t = await r.text();
+        let shown = t; try { shown = JSON.stringify(JSON.parse(t), null, 2); } catch {}
+        if (/^\s*<(?:!doctype|html)/i.test(t)) shown = "上游返回了 HTML 错误页（通常是超时/网关错误，如 Cloudflare 524）。重型模型建议用流式，或降低档位。\n\n" + t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+        out.textContent = head + "HTTP " + r.status + "\n" + shown.slice(0, 4000);
+        return;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "", acc = "", think = "";
+      const paint = (cursor) => { out.textContent = head + (think ? "〔思考〕\n" + think + "\n\n" : "") + acc + (cursor ? " ▍" : ""); };
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          const s = line.trim();
+          if (!s.startsWith("data:")) continue;
+          const payload = s.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const jj = JSON.parse(payload);
+            const c = jj.choices && jj.choices[0];
+            const d = c && (c.delta || c.message);
+            if (d) {
+              if (typeof d.content === "string") acc += d.content;
+              if (typeof d.reasoning_content === "string") think += d.reasoning_content;
+            }
+          } catch { /* 半行/非JSON，忽略 */ }
+        }
+        paint(true);
+      }
+      out.textContent = (head + (think ? "〔思考〕\n" + think + "\n\n" : "") + acc).trim() || (head + "（无内容返回）");
+    } catch (err) {
+      if (err && err.name === "AbortError") out.textContent = (out.textContent === "连接中…（流式）" ? "" : out.textContent) + "\n⏹ 已停止";
+      else out.textContent = "请求出错：" + err.message;
+    } finally {
+      testCtrl = null;
+      $("testBtn").textContent = "发送 / 测试选中模型";
+    }
   }
 
   $("delModelBtn").addEventListener("click", () => {

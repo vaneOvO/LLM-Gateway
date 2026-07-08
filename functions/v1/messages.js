@@ -159,7 +159,9 @@ async function tryModel(env, cfg, stats, model, body, updates, force, anthropicV
   if (!cands.length) return { none: true };
   const ordered = orderCandidates(cands, stats);
   const upstreamBody = JSON.stringify({ ...body, model: chosenModel });
-  const timeoutMs = body && body.stream ? 30000 : 120000;
+  // 重型模型（多智能体/heavy/expert/xhigh 等）首字节可能很慢：流式首字节超时放宽到 90s，避免被误判失败而降级
+  const heavy = /multi-agent|heavy|expert|xhigh|x-high|reasoning|thinking|deep-?research/i.test(String(chosenModel || model));
+  const timeoutMs = body && body.stream ? (heavy ? 90000 : 30000) : 120000;
   let last = null;
   for (const ep of ordered) {
     const key = pickKey(ep.apiKeys);

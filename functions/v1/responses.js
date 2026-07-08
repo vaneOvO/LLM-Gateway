@@ -1,4 +1,4 @@
-// POST /v1/chat/completions
+// POST /v1/responses  —— OpenAI Responses API（透传，复用 chat 的路由/故障转移/兜底/流式/超时/错误体识别/最近调用记录）
 // 鉴权：Authorization: Bearer <PROXY_API_KEY>
 //
 // 选路（按优先级）：
@@ -60,7 +60,7 @@ function orderCandidates(cands, stats) {
   return [first, ...rest, ...tail].map((a) => a.ep);
 }
 
-const KIND = "chat";
+const KIND = "responses";
 // 最近调用记录：内存缓冲 + 写入节流，折进 stats 的同一次写入里，不额外增加 KV 写入。
 let __lastStatWrite = 0;
 let __pendingRecent = [];
@@ -174,7 +174,7 @@ async function tryModel(env, cfg, stats, model, body, updates, force) {
   let last = null;
   for (const ep of ordered) {
     const key = pickKey(ep.apiKeys);
-    const url = ep.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+    const url = ep.baseUrl.replace(/\/+$/, "") + "/responses";
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const start = Date.now();

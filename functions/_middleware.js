@@ -3,7 +3,7 @@
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization,Content-Type,X-Admin-Token,x-goog-api-key,X-Force-Upstream",
+  "Access-Control-Allow-Headers": "Authorization,Content-Type,X-Admin-Token,x-goog-api-key,X-Force-Upstream,x-api-key,anthropic-version",
   "Access-Control-Expose-Headers": "X-Upstream,X-Served-Model,X-Fallback-From",
   "Access-Control-Max-Age": "86400",
 };

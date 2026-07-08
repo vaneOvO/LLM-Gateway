@@ -17,9 +17,12 @@ export async function onRequestGet({ request, env }) {
   if (!adminOk(request, env)) return j({ error: "管理员令牌无效" }, 401);
   try {
     const raw = await env.CONFIG_KV.get("stats");
-    return j({ stats: raw ? JSON.parse(raw) : {} });
+    const s = raw ? JSON.parse(raw) : {};
+    const recent = Array.isArray(s.__recent) ? s.__recent : [];
+    delete s.__recent; // 从按站点计数里剔除，单独返回
+    return j({ stats: s, recent });
   } catch {
-    return j({ stats: {} });
+    return j({ stats: {}, recent: [] });
   }
 }
 

@@ -80,9 +80,15 @@ async function handle({ request, env }) {
 
   const queue = [...targets];
   let ok = 0, fail = 0;
-  const writeProgress = (p) => env.CONFIG_KV.put("syncState", JSON.stringify(p)).catch(() => {});
+  let lastProgressWrite = 0;
+  const writeProgress = (p, force) => {
+    const now = Date.now();
+    if (!force && now - lastProgressWrite < 1500) return Promise.resolve(); // 节流：≤1.5s 内不重复写 KV，省写入配额
+    lastProgressWrite = now;
+    return env.CONFIG_KV.put("syncState", JSON.stringify(p)).catch(() => {});
+  };
   let progress = { phase: "sync", startedAt: Date.now(), total: targets.length, done: 0, ok: 0, fail: 0 };
-  await writeProgress(progress);
+  await writeProgress(progress, true);
   async function worker() {
     while (queue.length > 0) {
       const { e, i } = queue.shift();
@@ -128,7 +134,7 @@ async function handle({ request, env }) {
     }
     const batch = cursor.snapshot.slice(cursor.offset, cursor.offset + batchSize);
     progress = { ...progress, phase: "test", testTotal: cursor.snapshot.length, testDone: cursor.offset, testAlive: cursor.alive.length, testDead: cursor.deadCount, round: cursor.round };
-    await writeProgress(progress);
+    await writeProgress(progress, true);
 
     async function probeOne(model) {
       const cands = endpoints.filter((e) => (e.apiKeys || []).length && Array.isArray(e.models) && e.models.includes(model));

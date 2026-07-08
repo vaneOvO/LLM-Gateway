@@ -1,18 +1,7 @@
-// POST /v1/chat/completions
-// 鉴权：Authorization: Bearer <PROXY_API_KEY>
-//
-// 选路（按优先级）：
-//   1) 裸模型名：model 直接写 "gemini-3.5-flash" → 所有「列出了该模型」的上游都是候选；
-//   2) 显式分组：若没有上游列出该完整字符串，且含 "/"，按 "组名/模型名" 解析；
-//   3) 通配兜底：再没有，就用「模型列表留空」的上游(通配任意模型)当候选。
-// 候选里：未冷却的优先；首选按 1/延迟 加权随机（低延迟优先 + 负载均衡）；失败自动切下一个，失败上游冷却 30s。
-//
-// 模型降级/兜底（本次新增）：
-//   依次尝试 [请求的模型, ...config.fallbackModels]；
-//   只要某个模型在某个上游成功（HTTP < 400）就立即把它的响应（含流式）原样返回，绝不返回错误中断；
-//   实际命中：响应头 X-Upstream / X-Served-Model；若发生降级，附 X-Fallback-From=<原请求模型>。
-//
-// 计数/延迟：响应后用 waitUntil 按 baseUrl 写进 KV "stats"。
+// POST /v1/messages  —— Anthropic Messages API（透传）
+// 鉴权：x-api-key: <PROXY_API_KEY> 或 Authorization: Bearer <PROXY_API_KEY>
+// 选路：按 body.model 路由；同模型多站点故障转移（claude 系不跨模型兜底）。
+// 回源：POST {baseUrl}/messages，转发 anthropic-version；含超时/错误体识别/最近调用记录；原样透传（含流式 SSE）。
 
 function j(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -60,7 +49,7 @@ function orderCandidates(cands, stats) {
   return [first, ...rest, ...tail].map((a) => a.ep);
 }
 
-const KIND = "chat";
+const KIND = "messages";
 // 最近调用记录：内存缓冲 + 写入节流，折进 stats 的同一次写入里，不额外增加 KV 写入。
 let __lastStatWrite = 0;
 let __pendingRecent = [];
@@ -165,7 +154,7 @@ async function passOrFail(resp) {
 
 // 尝试一个 model：在其候选上游间做故障转移。
 // 加了回源超时（流式 30s 到头、非流式 120s 全程）与"200 但错误体"识别。
-async function tryModel(env, cfg, stats, model, body, updates, force) {
+async function tryModel(env, cfg, stats, model, body, updates, force, anthropicVersion) {
   const { cands, chosenModel } = resolveCandidates(cfg, model, force);
   if (!cands.length) return { none: true };
   const ordered = orderCandidates(cands, stats);
@@ -174,7 +163,7 @@ async function tryModel(env, cfg, stats, model, body, updates, force) {
   let last = null;
   for (const ep of ordered) {
     const key = pickKey(ep.apiKeys);
-    const url = ep.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+    const url = ep.baseUrl.replace(/\/+$/, "") + "/messages";
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const start = Date.now();
@@ -182,7 +171,12 @@ async function tryModel(env, cfg, stats, model, body, updates, force) {
     try {
       resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": key,
+          "anthropic-version": anthropicVersion || "2023-06-01",
+          Authorization: `Bearer ${key}`,
+        },
         body: upstreamBody,
         signal: ctrl.signal,
       });
@@ -213,55 +207,39 @@ async function tryModel(env, cfg, stats, model, body, updates, force) {
 
 export async function onRequestPost(context) {
   const { request, env } = context;
-  const auth = request.headers.get("Authorization") || "";
-  if (!env.PROXY_API_KEY || auth !== `Bearer ${env.PROXY_API_KEY}`) return j({ error: "Unauthorized" }, 401);
+  // 鉴权：接受 Anthropic 风格 x-api-key，或 Authorization: Bearer
+  const bearer = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  const xkey = (request.headers.get("x-api-key") || "").trim();
+  const provided = xkey || bearer;
+  if (!env.PROXY_API_KEY || provided !== env.PROXY_API_KEY) {
+    return j({ type: "error", error: { type: "authentication_error", message: "Unauthorized" } }, 401);
+  }
 
   let body;
-  try { body = await request.json(); } catch { return j({ error: "Invalid JSON" }, 400); }
+  try { body = await request.json(); } catch { return j({ type: "error", error: { type: "invalid_request_error", message: "Invalid JSON" } }, 400); }
 
   const model = String(body.model || "");
-  if (!model) return j({ error: "缺少 model" }, 400);
+  if (!model) return j({ type: "error", error: { type: "invalid_request_error", message: "缺少 model" } }, 400);
 
   const cfg = await loadConfig(env);
   const stats = await loadStats(env);
-
-  // 测活用：钉死到某个上游（按 baseUrl），且不触发兜底降级
   const force = request.headers.get("X-Force-Upstream") || "";
+  const anthropicVersion = request.headers.get("anthropic-version") || "2023-06-01";
 
-  // 尝试顺序：先请求的模型，再依次是配置里的兜底模型（去重、去掉与请求相同的）；钉死模式只测该模型本身
-  const tryList = [];
-  const seen = new Set();
-  const source = force ? [model] : [model, ...(cfg.fallbackModels || [])];
-  for (const m of source) {
-    const mm = String(m || "").trim();
-    if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); }
-  }
-
+  // Anthropic 只做同模型多站点故障转移，不跨模型兜底（claude 系与 gpt/gemini 不同族）
   const updates = [];
-  let last = null;
-  let anyCandidates = false;
+  const r = await tryModel(env, cfg, stats, model, body, updates, force, anthropicVersion);
+  const recent = (r.ok && !force) ? { t: Date.now(), m: r.chosenModel, u: r.ep.baseUrl, s: r.status, ms: r.lat, k: KIND } : null;
+  context.waitUntil(applyStats(env, updates, { forced: !!force, recent }));
 
-  for (const m of tryList) {
-    const r = await tryModel(env, cfg, stats, m, body, updates, force);
-    if (r.none) continue;              // 没有列出该模型的上游 → 试下一个兜底
-    anyCandidates = true;
-    if (r.ok) {
-      const recent = force ? null : { t: Date.now(), m: r.chosenModel, u: r.ep.baseUrl, s: r.status, ms: r.lat, k: KIND };
-      if (recent && m !== model) recent.r = model; // 记录降级来源
-      context.waitUntil(applyStats(env, updates, { forced: !!force, recent }));
-      const headers = new Headers();
-      if (r.ct) headers.set("Content-Type", r.ct);
-      headers.set("X-Upstream", r.ep.baseUrl);
-      headers.set("X-Served-Model", r.chosenModel);
-      if (m !== model) headers.set("X-Fallback-From", model); // 发生了降级
-      return new Response(r.stream || r.text || "", { status: r.status, headers });
-    }
-    if (r.last) last = r.last;         // 该模型所有上游都失败 → 试下一个兜底
+  if (r.none) return j({ type: "error", error: { type: "not_found_error", message: `没有列出模型 '${model}' 的可用上游` } }, 404);
+  if (r.ok) {
+    const headers = new Headers();
+    if (r.ct) headers.set("Content-Type", r.ct);
+    headers.set("X-Upstream", r.ep.baseUrl);
+    headers.set("X-Served-Model", r.chosenModel);
+    return new Response(r.stream || r.text || "", { status: r.status, headers });
   }
-
-  // 全部（含兜底）都失败
-  context.waitUntil(applyStats(env, updates, { forced: !!force }));
-  if (!anyCandidates) return j({ error: `没有列出模型 '${model}' 或其兜底模型的可用上游` }, 404);
-  if (last) return new Response(last.text || "", { status: last.status, headers: { "Content-Type": "application/json" } });
-  return j({ error: `模型 '${model}' 及兜底模型均不可用` }, 502);
+  if (r.last) return new Response(r.last.text || "", { status: r.last.status, headers: { "Content-Type": "application/json" } });
+  return j({ type: "error", error: { type: "api_error", message: `模型 '${model}' 不可用` } }, 502);
 }

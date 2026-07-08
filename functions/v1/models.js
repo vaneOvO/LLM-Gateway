@@ -22,13 +22,14 @@ export async function onRequestGet({ request, env }) {
     return j({ error: "Unauthorized" }, 401);
   }
   const cfg = await loadConfig(env);
+  const created = Math.floor(Date.now() / 1000);
   const seen = new Set();
   const data = [];
   for (const ep of cfg.endpoints) {
     for (const m of ep.models || []) {
       if (seen.has(m)) continue;   // 跨所有上游按裸模型名去重
       seen.add(m);
-      data.push({ id: m, object: "model", owned_by: "gateway" });
+      data.push({ id: m, object: "model", created, owned_by: "gateway" });
     }
   }
   return j({ object: "list", data });

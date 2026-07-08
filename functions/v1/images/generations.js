@@ -77,15 +77,22 @@ function orderCandidates(cands, stats) {
   const tail = healthy.length ? cold : [];
   return [first, ...rest, ...tail].map((a) => a.ep);
 }
+const KIND = "image";
+let __lastStatWrite = 0;
+let __pendingRecent = [];
+const RECENT_MAX = 20;
 async function applyStats(env, updates, opts) {
-  if (!updates.length) return;
-  if (opts && opts.forced) return; // 测活/钉死不写
+  const recent = opts && opts.recent;
+  if (recent) __pendingRecent.push(recent);
+  if (!updates.length && !recent) return;
+  if (opts && opts.forced) return; // 测活/钉死不记不写
   const hasFailure = updates.some((u) => u.down);
-  if (!hasFailure && Math.random() > 0.08) return; // 普通请求抽样写，省 KV 写入额度
+  const now = Date.now();
+  if (!hasFailure && now - __lastStatWrite < 4000) return; // 节流：仅失败或距上次写 ≥4s 才写，其余内存缓冲
+  __lastStatWrite = now;
   try {
     const raw = await env.CONFIG_KV.get("stats");
     const s = raw ? JSON.parse(raw) : {};
-    const now = Date.now();
     for (const u of updates) {
       const e = s[u.baseUrl] || { total: 0, ok: 0, err: 0, lastUsed: null, latMs: null, downUntil: 0 };
       e.total++; u.ok ? e.ok++ : e.err++;
@@ -93,6 +100,13 @@ async function applyStats(env, updates, opts) {
       if (typeof u.lat === "number") e.latMs = e.latMs == null ? u.lat : Math.round(e.latMs * 0.7 + u.lat * 0.3);
       e.downUntil = u.down ? now + 30000 : 0;
       s[u.baseUrl] = e;
+    }
+    if (__pendingRecent.length) {
+      const prev = Array.isArray(s.__recent) ? s.__recent : [];
+      const merged = [...__pendingRecent, ...prev];
+      merged.sort((a, b) => (b.t || 0) - (a.t || 0));
+      s.__recent = merged.slice(0, RECENT_MAX);
+      __pendingRecent = [];
     }
     await env.CONFIG_KV.put("stats", JSON.stringify(s));
   } catch {}
@@ -167,7 +181,13 @@ export async function onRequestPost(context) {
     if (r.resp) { served = { resp: r.resp, ep: r.ep, chosenModel: r.chosenModel, model: m }; break; }
     last = r.last;                         // 这个模型所有站点都失败 → 试下一个兜底
   }
-  context.waitUntil(applyStats(env, updates, { forced: !!force }));
+  let recent = null;
+  if (served && !force) {
+    const okU = [...updates].reverse().find((u) => u.ok);
+    recent = { t: Date.now(), m: served.chosenModel, u: served.ep.baseUrl, s: served.resp.status, ms: okU ? okU.lat : undefined, k: KIND };
+    if (served.model !== model) recent.r = model;
+  }
+  context.waitUntil(applyStats(env, updates, { forced: !!force, recent }));
 
   if (served) {
     const headers = { "Content-Type": served.resp.ct, "X-Upstream": served.ep.baseUrl, "X-Served-Model": served.chosenModel };

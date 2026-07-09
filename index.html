@@ -245,6 +245,28 @@
   .recent-item .ru { font-size: 11px; color: var(--faint); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .recent-item .rbad { color: var(--danger-text); }
 
+  /* ===== 测试面板对话（气泡 + Markdown 渲染） ===== */
+  .chat-out { display: block; max-height: 62vh; overflow-y: auto; padding: 2px; font-size: 13.5px; line-height: 1.62; }
+  .chat-out .msg { border: 1px solid var(--line); border-radius: 14px; padding: 10px 13px; margin-bottom: 10px; background: var(--panel-2); }
+  .chat-out .msg.user { background: rgba(52,211,153,.06); border-color: var(--ok-line); }
+  .chat-out .msg-role { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+  .chat-out .msg.user .msg-role { color: var(--accent); }
+  .chat-out .msg-meta { font-size: 11px; color: var(--faint); margin-bottom: 6px; font-family: var(--mono); word-break: break-all; }
+  .chat-out .msg-think { font-size: 12px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 8px; margin-bottom: 8px; white-space: pre-wrap; }
+  .chat-out .msg-body { color: var(--text); word-break: break-word; }
+  .chat-out .cursor { opacity: .55; }
+  .chat-out .md-h { margin: .6em 0 .3em; line-height: 1.3; font-weight: 700; }
+  .chat-out h3.md-h { font-size: 1.12em; } .chat-out h4.md-h { font-size: 1.05em; } .chat-out h5.md-h, .chat-out h6.md-h { font-size: 1em; color: var(--muted); }
+  .chat-out .msg-body p { margin: .4em 0; }
+  .chat-out .msg-body p:first-child { margin-top: 0; }
+  .chat-out .md-list { margin: .3em 0; padding-left: 1.4em; }
+  .chat-out .md-list li { margin: .15em 0; }
+  .chat-out .md-code { font-family: var(--mono); font-size: .9em; background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 5px; }
+  .chat-out .md-pre { background: rgba(0,0,0,.35); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; overflow-x: auto; margin: .5em 0; }
+  .chat-out .md-pre code { font-family: var(--mono); font-size: 12px; background: none; padding: 0; }
+  .chat-out a { color: var(--accent); text-decoration: underline; word-break: break-all; }
+  .chat-out .md-hr { border: none; border-top: 1px solid var(--line); margin: .6em 0; }
+
   /* ===== 手机端适配（窄屏 ≤600px：多列堆叠、内边距收紧、触摸友好） ===== */
   @media (max-width: 600px) {
     .wrap { padding: 16px 12px 72px; }
@@ -446,7 +468,7 @@
       <button class="mini ghost" id="clearTestBtn" style="display:none;">新对话</button>
       <span class="spacer"></span>
     </div>
-    <pre id="testOut" style="display:none;"></pre>
+    <div id="testOut" class="chat-out" style="display:none;"></div>
 
     <div class="testpanel" id="testPanel" style="display:none;">
       <div class="tp-head">
@@ -1390,15 +1412,60 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   let chatHistory = [];        // 多轮上下文 {role, content}
   const CHAT_MAX_MSGS = 12;    // 只保留最近 ~6 轮，避免上下文越滚越大发不出去
 
+  // 轻量 Markdown → HTML（标题/加粗/斜体/行内代码/代码块/链接/列表/分隔线），先转义防注入
+  function mdToHtml(src) {
+    const blocks = [];
+    let text = String(src == null ? "" : src).replace(/```(\w*)\n?([\s\S]*?)```/g, (m, l, c) => { blocks.push(c.replace(/\n$/, "")); return "\u0000" + (blocks.length - 1) + "\u0000"; });
+    const inline = (t) => {
+      t = escapeHtml(t);
+      t = t.replace(/\u0000(\d+)\u0000/g, (m, n) => '<code class="md-code">' + escapeHtml(blocks[+n]) + "</code>");
+      t = t.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
+      t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      t = t.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+      return t;
+    };
+    const lines = text.split(/\n/);
+    let html = "", listType = null, listBuf = [], para = [];
+    const flushList = () => { if (listType) { html += "<" + listType + ' class="md-list">' + listBuf.map((x) => "<li>" + x + "</li>").join("") + "</" + listType + ">"; listType = null; listBuf = []; } };
+    const flushPara = () => { if (para.length) { html += "<p>" + para.map(inline).join("<br>") + "</p>"; para = []; } };
+    for (const raw of lines) {
+      const line = raw.replace(/\s+$/, "");
+      let m;
+      if (m = line.match(/^\u0000(\d+)\u0000$/)) { flushList(); flushPara(); html += '<pre class="md-pre"><code>' + escapeHtml(blocks[+m[1]]) + "</code></pre>"; continue; }
+      if (m = line.match(/^(#{1,6})\s+(.*)$/)) { flushList(); flushPara(); const lvl = Math.min(m[1].length + 2, 6); html += "<h" + lvl + ' class="md-h">' + inline(m[2]) + "</h" + lvl + ">"; continue; }
+      if (m = line.match(/^\s*[-*]\s+(.*)$/)) { flushPara(); if (listType !== "ul") { flushList(); listType = "ul"; } listBuf.push(inline(m[1])); continue; }
+      if (m = line.match(/^\s*\d+[.)]\s+(.*)$/)) { flushPara(); if (listType !== "ol") { flushList(); listType = "ol"; } listBuf.push(inline(m[1])); continue; }
+      if (/^\s*(?:[-*_]\s*){3,}$/.test(line)) { flushList(); flushPara(); html += '<hr class="md-hr">'; continue; }
+      if (line.trim() === "") { flushList(); flushPara(); continue; }
+      flushList(); para.push(line);
+    }
+    flushList(); flushPara();
+    return html;
+  }
+
   function renderChat(pending) {
     const out = $("testOut");
-    const blocks = chatHistory.map((m) => (m.role === "user" ? "🧑 你\n" : "🤖 模型\n") + m.content);
-    if (pending) {
-      blocks.push("🧑 你\n" + pending.user);
-      const body = (pending.think ? "〔思考〕\n" + pending.think + "\n\n" : "") + pending.assistant + (pending.cursor ? " ▍" : "");
-      blocks.push((pending.meta ? pending.meta + "\n──────\n" : "") + "🤖 模型\n" + body);
+    const bubble = (role, contentHtml, metaLine, thinkText) => {
+      const think = thinkText ? '<div class="msg-think">〔思考〕' + escapeHtml(thinkText).replace(/\n/g, "<br>") + "</div>" : "";
+      return '<div class="msg ' + role + '"><div class="msg-role">' + (role === "user" ? "你" : "模型") + "</div>" +
+        (metaLine ? '<div class="msg-meta">' + escapeHtml(metaLine) + "</div>" : "") +
+        think + '<div class="msg-body">' + contentHtml + "</div></div>";
+    };
+    let html = "";
+    for (const m of chatHistory) {
+      html += m.role === "user"
+        ? bubble("user", escapeHtml(m.content).replace(/\n/g, "<br>"), "", "")
+        : bubble("assistant", mdToHtml(m.content), "", "");
     }
-    out.textContent = blocks.join("\n\n═══════\n\n");
+    if (pending) {
+      html += bubble("user", escapeHtml(pending.user).replace(/\n/g, "<br>"), "", "");
+      // 流式中的回复用纯文本 + 光标（快、不出现半截 Markdown）；提交后再整体渲染成排版
+      const body = escapeHtml(pending.assistant).replace(/\n/g, "<br>") + (pending.cursor ? '<span class="cursor">▍</span>' : "");
+      html += bubble("assistant", body, pending.meta, pending.think);
+    }
+    out.innerHTML = html;
+    out.scrollTop = out.scrollHeight;
   }
 
   async function test() {

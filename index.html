@@ -439,10 +439,11 @@
     <div class="field">
       <label>消息</label>
       <textarea id="testMsg" placeholder="hello">hello</textarea>
+      <div class="hint">支持多轮：会带上本会话最近若干轮上下文（自动只保留最近 6 轮，防止越滚越大）。点「新对话」清空重来。重型模型建议保持流式。</div>
     </div>
     <div class="bar">
       <button class="primary" id="testBtn">发送 / 测试选中模型</button>
-      <button class="mini ghost" id="clearTestBtn" style="display:none;">清空输出</button>
+      <button class="mini ghost" id="clearTestBtn" style="display:none;">新对话</button>
       <span class="spacer"></span>
     </div>
     <pre id="testOut" style="display:none;"></pre>
@@ -1386,6 +1387,20 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   }
 
   let testCtrl = null;
+  let chatHistory = [];        // 多轮上下文 {role, content}
+  const CHAT_MAX_MSGS = 12;    // 只保留最近 ~6 轮，避免上下文越滚越大发不出去
+
+  function renderChat(pending) {
+    const out = $("testOut");
+    const blocks = chatHistory.map((m) => (m.role === "user" ? "🧑 你\n" : "🤖 模型\n") + m.content);
+    if (pending) {
+      blocks.push("🧑 你\n" + pending.user);
+      const body = (pending.think ? "〔思考〕\n" + pending.think + "\n\n" : "") + pending.assistant + (pending.cursor ? " ▍" : "");
+      blocks.push((pending.meta ? pending.meta + "\n──────\n" : "") + "🤖 模型\n" + body);
+    }
+    out.textContent = blocks.join("\n\n═══════\n\n");
+  }
+
   async function test() {
     // 正在流式时，再次点击 = 停止
     if (testCtrl) { try { testCtrl.abort(); } catch {} testCtrl = null; $("testBtn").textContent = "发送 / 测试选中模型"; return; }
@@ -1394,35 +1409,39 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
     const msg = $("testMsg").value;
     if (!key) return toast("填 PROXY_API_KEY", "err");
     if (!model) return toast("填模型名", "err");
+    if (!msg.trim()) return toast("先输入消息", "err");
     LS.p = key;
-    const out = $("testOut"); out.style.display = "block"; out.textContent = "连接中…（流式）";
+    // 发送前把历史裁到最近 N 条
+    if (chatHistory.length > CHAT_MAX_MSGS) chatHistory = chatHistory.slice(-CHAT_MAX_MSGS);
+    const sendMessages = [...chatHistory, { role: "user", content: msg }];
+
+    $("testOut").style.display = "block";
     $("clearTestBtn").style.display = "";
     const btn = $("testBtn");
     testCtrl = new AbortController();
     btn.textContent = "停止";
+
+    let acc = "", think = "", meta = "";
+    renderChat({ user: msg, assistant: "连接中…", think: "", meta: "", cursor: false });
     try {
       const r = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: msg }], stream: true }),
+        body: JSON.stringify({ model, messages: sendMessages, stream: true }),
         signal: testCtrl.signal,
       });
-      // 元信息：实际命中的上游/模型/是否降级
       const served = r.headers.get("X-Served-Model"), up = r.headers.get("X-Upstream"), fb = r.headers.get("X-Fallback-From");
-      const meta = [served && ("模型 " + served), up && ("上游 " + up), fb && ("⚠兜底自 " + fb)].filter(Boolean).join("  ·  ");
-      const head = meta ? meta + "\n" + "─".repeat(Math.min(meta.length, 48)) + "\n\n" : "";
+      meta = [served && ("模型 " + served), up && ("上游 " + up), fb && ("⚠兜底自 " + fb)].filter(Boolean).join("  ·  ");
       if (!r.ok || !r.body) {
-        // 错误：读文本，能解析成 JSON 就美化，HTML(如超时页)则截断展示
         const t = await r.text();
         let shown = t; try { shown = JSON.stringify(JSON.parse(t), null, 2); } catch {}
-        if (/^\s*<(?:!doctype|html)/i.test(t)) shown = "上游返回了 HTML 错误页（通常是超时/网关错误，如 Cloudflare 524）。重型模型建议用流式，或降低档位。\n\n" + t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
-        out.textContent = head + "HTTP " + r.status + "\n" + shown.slice(0, 4000);
-        return;
+        if (/^\s*<(?:!doctype|html)/i.test(t)) shown = "上游返回了 HTML 错误页（通常是超时/网关错误，如 Cloudflare 524）。重型模型建议用流式或降低档位。\n\n" + t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+        renderChat({ user: msg, assistant: "❌ HTTP " + r.status + "\n" + shown.slice(0, 4000), think: "", meta, cursor: false });
+        return; // 失败不入历史，保留输入便于重试
       }
       const reader = r.body.getReader();
       const dec = new TextDecoder();
-      let buf = "", acc = "", think = "";
-      const paint = (cursor) => { out.textContent = head + (think ? "〔思考〕\n" + think + "\n\n" : "") + acc + (cursor ? " ▍" : ""); };
+      let buf = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1444,12 +1463,18 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
             }
           } catch { /* 半行/非JSON，忽略 */ }
         }
-        paint(true);
+        renderChat({ user: msg, assistant: acc, think, meta, cursor: true });
       }
-      out.textContent = (head + (think ? "〔思考〕\n" + think + "\n\n" : "") + acc).trim() || (head + "（无内容返回）");
+      // 成功：把这一轮提交进历史、清空输入，准备下一轮
+      chatHistory.push({ role: "user", content: msg });
+      chatHistory.push({ role: "assistant", content: acc });
+      if (chatHistory.length > CHAT_MAX_MSGS) chatHistory = chatHistory.slice(-CHAT_MAX_MSGS);
+      $("testMsg").value = "";
+      renderChat(); // 仅渲染已提交历史
     } catch (err) {
-      if (err && err.name === "AbortError") out.textContent = (out.textContent === "连接中…（流式）" ? "" : out.textContent) + "\n⏹ 已停止";
-      else out.textContent = "请求出错：" + err.message;
+      if (err && err.name === "AbortError") renderChat({ user: msg, assistant: (acc || "") + "\n⏹ 已停止", think, meta, cursor: false });
+      else renderChat({ user: msg, assistant: "请求出错：" + err.message, think: "", meta, cursor: false });
+      // 中断/出错不入历史，保留输入
     } finally {
       testCtrl = null;
       $("testBtn").textContent = "发送 / 测试选中模型";
@@ -1872,8 +1897,10 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
   });
   $("clearTestBtn").addEventListener("click", () => {
     if (testCtrl) { try { testCtrl.abort(); } catch {} testCtrl = null; $("testBtn").textContent = "发送 / 测试选中模型"; }
+    chatHistory = [];
     const out = $("testOut"); out.textContent = ""; out.style.display = "none";
     $("clearTestBtn").style.display = "none";
+    toast("已开始新对话", "ok");
   });
   $("resetStatsBtn").addEventListener("click", resetStats);
   $("testBtn").addEventListener("click", test);

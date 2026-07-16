@@ -37,6 +37,12 @@ const hasKey = (e) => Array.isArray(e.apiKeys) && e.apiKeys.length > 0;
 const listed = (e, m) => Array.isArray(e.models) && e.models.includes(m);
 const wildcard = (e) => !(Array.isArray(e.models) && e.models.length);
 
+// 4xx（408/425/429 除外）与正文明显是上下文超限的错误 → 直接透传，不冷却、不降级。
+const RETRYABLE_4XX = new Set([408, 425, 429]);
+function looksContextError(t) {
+  return /context[_\s-]*length|context window|maximum context|max(?:imum)?[_\s-]*tokens|too many tokens|reduce the length|prompt is too long|input is too long|string too long|exceed[^\n]{0,48}(?:context|token|length)|上下文|请求(?:体|内容)?过长|token\s*数(?:超|过)/i.test(String(t || ""));
+}
+
 function weightedPick(pool) {
   const w = pool.map((a) => 1 / Math.max(a.lat, 1));
   const sum = w.reduce((x, y) => x + y, 0);
@@ -202,10 +208,19 @@ async function tryModel(env, cfg, stats, model, body, updates, force) {
         updates.push({ baseUrl: ep.baseUrl, ok: true, lat });
         return { ok: true, ep, chosenModel, status: resp.status, ct: pf.ct, stream: pf.stream, text: pf.text, lat };
       }
+      if (looksContextError(pf.errText)) {
+        updates.push({ baseUrl: ep.baseUrl, ok: false, lat, down: false });
+        return { clientError: true, status: 400, text: pf.errText || JSON.stringify({ error: { message: "上下文超限" } }), ct: "application/json", ep, chosenModel };
+      }
       updates.push({ baseUrl: ep.baseUrl, ok: false, lat, down: true });
       last = { status: pf.status || 502, text: pf.errText || JSON.stringify({ error: { message: "上游返回了错误正文" } }) };
     } else {
       const t = await resp.text().catch(() => "");
+      const is4xx = resp.status >= 400 && resp.status < 500;
+      if ((is4xx && !RETRYABLE_4XX.has(resp.status)) || looksContextError(t)) {
+        updates.push({ baseUrl: ep.baseUrl, ok: false, lat, down: false });
+        return { clientError: true, status: resp.status, text: t, ct: resp.headers.get("Content-Type") || "application/json", ep, chosenModel };
+      }
       updates.push({ baseUrl: ep.baseUrl, ok: false, lat, down: true });
       last = { status: resp.status, text: t };
     }
@@ -249,6 +264,16 @@ export async function onRequestPost(context) {
     const r = await tryModel(env, cfg, stats, m, body, updates, force);
     if (r.none) continue;              // 没有列出该模型的上游 → 试下一个兜底
     anyCandidates = true;
+    if (r.clientError) {
+      // 客户端错误（上下文超限 / 参数非法）：直接透传，不冷却、不降级。
+      context.waitUntil(applyStats(env, updates, { forced: !!force }));
+      const headers = new Headers();
+      headers.set("Content-Type", r.ct || "application/json");
+      if (r.ep) headers.set("X-Upstream", r.ep.baseUrl);
+      if (r.chosenModel) headers.set("X-Served-Model", r.chosenModel);
+      headers.set("X-Client-Error", "1");
+      return new Response(r.text || "", { status: r.status, headers });
+    }
     if (r.ok) {
       const recent = force ? null : { t: Date.now(), m: r.chosenModel, u: r.ep.baseUrl, s: r.status, ms: r.lat, k: KIND };
       if (recent && m !== model) recent.r = model; // 记录降级来源

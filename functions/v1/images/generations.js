@@ -167,10 +167,12 @@ export async function onRequestPost(context) {
   const force = request.headers.get("X-Force-Upstream") || "";
   const updates = [];
 
-  // 尝试顺序：先请求的图像模型，再依次是 imageFallbackModels（去重）；钉死模式只试该模型本身
+  // 尝试顺序：先请求的图像模型，再依次是 imageFallbackModels（去重）；
+  // 钉死模式(force)与「显式站点名(model 含 "/")」都只试该模型本身，不跨模型降级。
+  const pinned = !!force || model.includes("/");
   const tryList = [];
   const seen = new Set();
-  const source = force ? [model] : [model, ...(cfg.imageFallbackModels || [])];
+  const source = pinned ? [model] : [model, ...(cfg.imageFallbackModels || [])];
   for (const m of source) { const mm = String(m || "").trim(); if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); } }
 
   let served = null, anyCandidates = false, last = null;

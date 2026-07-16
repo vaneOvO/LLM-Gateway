@@ -198,10 +198,12 @@ export async function onRequestPost(context) {
   const stats = await loadStats(env);
   const updates = [];
 
-  // 尝试顺序：请求的图像模型 → imageFallbackModels（去重）
+  // 尝试顺序：请求的图像模型 → imageFallbackModels（去重）；
+  // 显式站点名(model 含 "/")只试该模型本身，不跨模型降级。
   const tryList = [];
   const seen = new Set();
-  for (const m of [model, ...(cfg.imageFallbackModels || [])]) { const mm = String(m || "").trim(); if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); } }
+  const source = model.includes("/") ? [model] : [model, ...(cfg.imageFallbackModels || [])];
+  for (const m of source) { const mm = String(m || "").trim(); if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); } }
 
   let r = null, anyCandidates = false, last = null, servedModelReq = model;
   for (const m of tryList) {

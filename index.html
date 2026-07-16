@@ -240,6 +240,7 @@
   .recent-item .rk { flex: none; font-size: 10px; letter-spacing: .5px; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
   .recent-item .rm { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .recent-item .rm .rfb { font-family: inherit; font-size: 11px; color: var(--warn-deep); margin-left: 6px; }
+  .recent-item .rm .rcount { font-family: inherit; font-size: 11px; color: var(--muted); margin-left: 8px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
   .recent-item .rmeta { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; text-align: right; }
   .recent-item .rt { font-size: 11.5px; color: var(--muted); }
   .recent-item .ru { font-size: 11px; color: var(--faint); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -899,16 +900,42 @@ curl -X POST "${escapeHtml(origin)}/v1beta/models/${escapeHtml(im)}:generateCont
       box.innerHTML = `<div class="recent-empty">还没有记录。发起一次调用后，这里会显示实际命中的模型、上游与时间。</div>`;
       return;
     }
-    box.innerHTML = list.map((it) => {
+    // 把「连续且完全相同」的调用合并成一条：相同 模型(m) / 降级来源(r) / 上游(u) / 类型(k) / 成败。
+    // 列表本身是新→旧排序，所以合并后仍按时间顺序；合并条显示次数、最新时间、平均延迟。
+    const groups = [];
+    for (const it of list) {
       const bad = typeof it.s === "number" && it.s >= 400;
+      const sig = `${it.m || "?"}||${it.r || ""}||${it.u || ""}||${it.k || ""}||${bad ? 1 : 0}||${bad ? it.s : ""}`;
+      const g = groups[groups.length - 1];
+      if (g && g.sig === sig) {
+        g.count++;
+        g.tEarliest = it.t;                       // 越往后越旧
+        if (typeof it.ms === "number") { g.msSum += it.ms; g.msN++; }
+      } else {
+        groups.push({
+          sig, it, bad, count: 1,
+          tLatest: it.t, tEarliest: it.t,
+          msSum: typeof it.ms === "number" ? it.ms : 0,
+          msN: typeof it.ms === "number" ? 1 : 0,
+        });
+      }
+    }
+    box.innerHTML = groups.map((g) => {
+      const it = g.it, bad = g.bad;
       const host = (() => { try { return new URL(it.u).host; } catch { return it.u || ""; } })();
       const fb = it.r ? `<span class="rfb">← ${escapeHtml(it.r)}</span>` : "";
+      const countBadge = g.count > 1 ? `<span class="rcount" title="连续 ${g.count} 次相同调用已合并">×${g.count}</span>` : "";
+      const avgMs = g.msN ? Math.round(g.msSum / g.msN) : null;
+      const msText = avgMs != null ? (g.count > 1 ? " · 均" + avgMs + "ms" : " · " + avgMs + "ms") : "";
+      // 合并后展示最新一次的时间；若跨了不同的时刻，用 title 附上时间范围
+      const spanTitle = g.count > 1 ? escapeAttr(`${fmtClock(g.tEarliest)} → ${fmtClock(g.tLatest)}`) : "";
+      const timeText = `${fmtClock(g.tLatest)} · ${escapeHtml(timeAgo(g.tLatest))}`;
       return `<div class="recent-item">
         <span class="rk">${escapeHtml(it.k || "调用")}</span>
-        <span class="rm">${escapeHtml(it.m || "?")}${fb}</span>
+        <span class="rm">${escapeHtml(it.m || "?")}${fb}${countBadge}</span>
         <span class="rmeta">
-          <span class="rt${bad ? " rbad" : ""}">${fmtClock(it.t)} · ${escapeHtml(timeAgo(it.t))}${bad ? " · " + it.s : ""}</span>
-          <span class="ru" title="${escapeAttr(it.u || "")}">${escapeHtml(host)}${typeof it.ms === "number" ? " · " + it.ms + "ms" : ""}</span>
+          <span class="rt${bad ? " rbad" : ""}"${spanTitle ? ` title="${spanTitle}"` : ""}>${timeText}${bad ? " · " + it.s : ""}</span>
+          <span class="ru" title="${escapeAttr(it.u || "")}">${escapeHtml(host)}${msText}</span>
         </span>
       </div>`;
     }).join("");

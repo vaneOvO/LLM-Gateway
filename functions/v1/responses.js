@@ -230,10 +230,12 @@ export async function onRequestPost(context) {
   // 测活用：钉死到某个上游（按 baseUrl），且不触发兜底降级
   const force = request.headers.get("X-Force-Upstream") || "";
 
-  // 尝试顺序：先请求的模型，再依次是配置里的兜底模型（去重、去掉与请求相同的）；钉死模式只测该模型本身
+  // 尝试顺序：先请求的模型，再依次是配置里的兜底模型（去重、去掉与请求相同的）；
+  // 钉死模式(force)与「显式站点名(model 含 "/")」都只试该模型本身，不跨模型降级。
+  const pinned = !!force || model.includes("/");
   const tryList = [];
   const seen = new Set();
-  const source = force ? [model] : [model, ...(cfg.fallbackModels || [])];
+  const source = pinned ? [model] : [model, ...(cfg.fallbackModels || [])];
   for (const m of source) {
     const mm = String(m || "").trim();
     if (mm && !seen.has(mm)) { seen.add(mm); tryList.push(mm); }
